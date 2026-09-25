@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @network-outreach/api --filter @network-outreach/web dev",
     "build": "pnpm --filter @network-outreach/core build && pnpm --filter @network-outreach/api build && pnpm --filter @network-outreach/web build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm --filter @network-outreach/core build && pnpm --filter @network-outreach/api typecheck && pnpm --filter @network-outreach/web typecheck"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
