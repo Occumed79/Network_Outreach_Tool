@@ -1,0 +1,14 @@
+{
+  "name": "network-outreach-tool",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @network-outreach/api --filter @network-outreach/web dev",
+    "build": "pnpm --filter @network-outreach/core build && pnpm --filter @network-outreach/api build && pnpm --filter @network-outreach/web build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
