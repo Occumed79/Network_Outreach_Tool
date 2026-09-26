@@ -1,4 +1,10 @@
-import { extractDomain, normalizePhone, normalizeProviderName, type ProviderCandidate } from '@network-outreach/core';
+import {
+  PROVIDER_TYPE_PROFILES,
+  extractDomain,
+  normalizePhone,
+  normalizeProviderName,
+  type ProviderCandidate
+} from '@network-outreach/core';
 import { operationalDb, researchDb } from './db.js';
 import { evaluateProvider } from './providerGate.js';
 
@@ -57,6 +63,51 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
     ]
   );
 
+  const candidateId = inserted.rows[0].id;
+
+  if (candidate.sourceUrl) {
+    await researchDb.query(
+      `
+        insert into evidence_sources
+          (research_run_id, candidate_id, evidence_type, source_url, source_domain, structured_data, confidence)
+        values
+          ($1, $2, 'DISCOVERY_SOURCE', $3, $4, $5::jsonb, 0.8)
+      `,
+      [
+        runId,
+        candidateId,
+        candidate.sourceUrl,
+        extractDomain(candidate.sourceUrl),
+        JSON.stringify({ providerName: candidate.name })
+      ]
+    );
+  }
+
+  if (candidate.email) {
+    await researchDb.query(
+      `
+        insert into contact_candidates
+          (candidate_id, email, email_verified, source_url, confidence, disposition)
+        values
+          ($1, $2, false, $3, 0.6, 'PENDING')
+      `,
+      [candidateId, candidate.email, candidate.sourceUrl || null]
+    );
+  }
+
+  const services = [...new Set((candidate.services || []).map((service) => service.trim()).filter(Boolean))];
+  for (const service of services) {
+    await researchDb.query(
+      `
+        insert into service_findings
+          (candidate_id, service_name, availability_status, source_url, confidence)
+        values
+          ($1, $2, 'DOCUMENTED', $3, 0.8)
+      `,
+      [candidateId, service, candidate.sourceUrl || null]
+    );
+  }
+
   const gate = await evaluateProvider(candidate);
   const updated = await researchDb.query(
     `
@@ -72,7 +123,7 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
       where id = $1
       returning *
     `,
-    [inserted.rows[0].id, gate.decision, gate.confidence, JSON.stringify(gate.reasons)]
+    [candidateId, gate.decision, gate.confidence, JSON.stringify(gate.reasons)]
   );
 
   await researchDb.query(
@@ -82,7 +133,7 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
     `,
     [
       runId,
-      inserted.rows[0].id,
+      candidateId,
       `Provider Gate decision: ${gate.decision}`,
       JSON.stringify(gate)
     ]
@@ -130,9 +181,27 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
   const candidate = source.rows[0];
   if (!candidate) throw new Error('Research candidate was not found.');
 
-  const allowed = ['NEW', 'NEEDS_REVIEW', 'SEEN_BEFORE'];
+  const allowed = ['NEW', 'NEEDS_REVIEW'];
   if (!override && !allowed.includes(candidate.gate_decision)) {
     throw new Error(`Candidate is gated as ${candidate.gate_decision}; explicit override is required to promote it.`);
+  }
+
+  const profile = PROVIDER_TYPE_PROFILES.find((item) => item.id === candidate.provider_type);
+  const requiredCapabilities = profile?.requiredCapabilities || [];
+  if (!override && requiredCapabilities.length > 0) {
+    const findings = await researchDb.query(
+      'select service_name from service_findings where candidate_id = $1',
+      [candidateId]
+    );
+    const documented = new Set(
+      findings.rows.map((row) => String(row.service_name).trim().toLowerCase())
+    );
+    const missing = requiredCapabilities.filter(
+      (capability) => !documented.has(capability.toLowerCase())
+    );
+    if (missing.length > 0) {
+      throw new Error(`Required capabilities not yet documented: ${missing.join(', ')}`);
+    }
   }
 
   if (candidate.operational_facility_id) {
