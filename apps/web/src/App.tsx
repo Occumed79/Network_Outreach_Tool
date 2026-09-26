@@ -97,6 +97,13 @@ type CandidateDraft = {
   email: string;
   phone: string;
   sourceUrl: string;
+  services: string[];
+};
+
+type ProviderTypeProfile = {
+  id: string;
+  label: string;
+  requiredCapabilities: string[];
 };
 
 const nav = [
@@ -106,17 +113,6 @@ const nav = [
   ['Pricing', Tags],
   ['Agreements', FileText],
   ['Evidence', ShieldCheck]
-] as const;
-
-const providerTypes = [
-  ['dental', 'Dental'],
-  ['occupational_health', 'Occupational Health'],
-  ['hospital', 'Hospital / Multispecialty'],
-  ['laboratory', 'Laboratory'],
-  ['cardiology', 'Cardiology'],
-  ['vaccination', 'Vaccination / Travel Medicine'],
-  ['imaging', 'Imaging'],
-  ['audiology', 'Audiology']
 ] as const;
 
 function StatusPill({ status }: { status: string }) {
@@ -137,6 +133,7 @@ function App() {
   const [activeNav, setActiveNav] = useState('Research');
   const [health, setHealth] = useState<Health | null>(null);
   const [runs, setRuns] = useState<ResearchRun[]>([]);
+  const [providerProfiles, setProviderProfiles] = useState<ProviderTypeProfile[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [queue, setQueue] = useState<QueueTarget[]>([]);
   const [selectedRunId, setSelectedRunId] = useState('');
@@ -149,21 +146,26 @@ function App() {
   const [notice, setNotice] = useState('');
   const [busyKey, setBusyKey] = useState('');
   const [candidateDraft, setCandidateDraft] = useState<CandidateDraft>({
-    name: '', city: '', website: '', email: '', phone: '', sourceUrl: ''
+    name: '', city: '', website: '', email: '', phone: '', sourceUrl: '', services: []
   });
 
   const selectedRun = runs.find((run) => run.id === selectedRunId) || null;
   const selectedCampaign = campaigns.find((campaign) => campaign.research_run_id === selectedRunId) || null;
+  const selectedProfile = providerProfiles.find(
+    (profile) => profile.id === (selectedRun?.provider_type || providerType)
+  ) || null;
 
   async function refresh() {
-    const [healthResponse, runsResponse, campaignsResponse, queueResponse] = await Promise.all([
+    const [healthResponse, providerTypesResponse, runsResponse, campaignsResponse, queueResponse] = await Promise.all([
       fetch('/api/health').then((r) => r.json()).catch(() => null),
+      fetch('/api/provider-types').then((r) => r.json()).catch(() => ({ providerTypes: [] })),
       fetch('/api/research-runs').then((r) => r.json()).catch(() => ({ runs: [] })),
       fetch('/api/campaigns').then((r) => r.json()).catch(() => ({ campaigns: [] })),
       fetch('/api/outreach/queue').then((r) => r.json()).catch(() => ({ targets: [] }))
     ]);
 
     setHealth(healthResponse);
+    setProviderProfiles(providerTypesResponse.providerTypes ?? []);
     setRuns(runsResponse.runs ?? []);
     setCampaigns(campaignsResponse.campaigns ?? []);
     setQueue(queueResponse.targets ?? []);
@@ -259,7 +261,8 @@ function App() {
         email: candidateDraft.email || undefined,
         phone: candidateDraft.phone || undefined,
         sourceUrl: candidateDraft.sourceUrl || undefined,
-        providerType: selectedRun.provider_type || providerType
+        providerType: selectedRun.provider_type || providerType,
+        services: candidateDraft.services
       })
     });
 
@@ -270,7 +273,7 @@ function App() {
       return;
     }
 
-    setCandidateDraft({ name: '', city: '', website: '', email: '', phone: '', sourceUrl: '' });
+    setCandidateDraft({ name: '', city: '', website: '', email: '', phone: '', sourceUrl: '', services: [] });
     setNotice(`Candidate added and gated as ${body.gate?.decision || 'reviewed'}.`);
     await Promise.all([loadCandidates(selectedRun.id), refresh()]);
     setBusyKey('');
@@ -412,8 +415,8 @@ function App() {
               <label>
                 <span>Provider type</span>
                 <select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
-                  {providerTypes.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                  {providerProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>{profile.label}</option>
                   ))}
                 </select>
               </label>
@@ -546,6 +549,31 @@ function App() {
                     <input placeholder="Phone" value={candidateDraft.phone} onChange={(e) => setCandidateDraft({ ...candidateDraft, phone: e.target.value })} />
                     <input placeholder="Source URL" value={candidateDraft.sourceUrl} onChange={(e) => setCandidateDraft({ ...candidateDraft, sourceUrl: e.target.value })} />
                   </div>
+                  {selectedProfile && selectedProfile.requiredCapabilities.length > 0 && (
+                    <div className="capability-checklist">
+                      <span className="capability-label">Documented at this provider</span>
+                      <div>
+                        {selectedProfile.requiredCapabilities.map((capability) => {
+                          const checked = candidateDraft.services.includes(capability);
+                          return (
+                            <label className="capability-option" key={capability}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => setCandidateDraft({
+                                  ...candidateDraft,
+                                  services: checked
+                                    ? candidateDraft.services.filter((service) => service !== capability)
+                                    : [...candidateDraft.services, capability]
+                                })}
+                              />
+                              <span>{capability}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </form>
 
                 <div className="candidate-list">
@@ -556,7 +584,8 @@ function App() {
                       <p>Research workers and manual intake both enter through this exact gate.</p>
                     </div>
                   ) : candidates.map((candidate) => {
-                    const promotable = ['NEW', 'NEEDS_REVIEW', 'SEEN_BEFORE'].includes(candidate.gate_decision || '');
+                    const promotable = ['NEW', 'NEEDS_REVIEW'].includes(candidate.gate_decision || '')
+                      && (!selectedProfile || candidate.service_count >= selectedProfile.requiredCapabilities.length);
                     return (
                       <div className="candidate-row" key={candidate.id}>
                         <div className="candidate-main">
