@@ -48,7 +48,8 @@ const candidateSchema = z.object({
   phone: z.string().nullish(),
   email: z.string().email().nullish(),
   providerType: z.string().nullish(),
-  sourceUrl: z.string().url().nullish()
+  sourceUrl: z.string().url().nullish(),
+  services: z.array(z.string().min(1)).max(50).optional()
 });
 
 app.post('/api/provider-gate/evaluate', async (req, res) => {
