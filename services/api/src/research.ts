@@ -1,6 +1,40 @@
-import { extractDomain, normalizePhone, normalizeProviderName, type ProviderCandidate } from '@network-outreach/core';
+import {
+  PROVIDER_TYPE_PROFILES,
+  extractDomain,
+  normalizePhone,
+  normalizeProviderName,
+  type ProviderCandidate
+} from '@network-outreach/core';
 import { operationalDb, researchDb } from './db.js';
 import { evaluateProvider } from './providerGate.js';
+
+export async function listResearchCandidates(runId: string) {
+  if (!researchDb) throw new Error('Research database is not configured.');
+
+  const result = await researchDb.query(
+    `
+      select
+        rc.*,
+        (select count(*)::int from evidence_sources es where es.candidate_id = rc.id) as evidence_count,
+        (select count(*)::int from contact_candidates cc where cc.candidate_id = rc.id) as contact_count,
+        (select count(*)::int from service_findings sf where sf.candidate_id = rc.id) as service_count,
+        (select count(*)::int from pricing_findings pf where pf.candidate_id = rc.id) as pricing_count
+      from research_candidates rc
+      where rc.research_run_id = $1
+      order by
+        case rc.gate_decision
+          when 'NEW' then 0
+          when 'NEEDS_REVIEW' then 1
+          when 'SEEN_BEFORE' then 2
+          else 3
+        end,
+        rc.created_at desc
+    `,
+    [runId]
+  );
+
+  return result.rows;
+}
 
 export async function addResearchCandidate(runId: string, candidate: ProviderCandidate) {
   if (!researchDb) throw new Error('Research database is not configured.');
@@ -29,6 +63,51 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
     ]
   );
 
+  const candidateId = inserted.rows[0].id;
+
+  if (candidate.sourceUrl) {
+    await researchDb.query(
+      `
+        insert into evidence_sources
+          (research_run_id, candidate_id, evidence_type, source_url, source_domain, structured_data, confidence)
+        values
+          ($1, $2, 'DISCOVERY_SOURCE', $3, $4, $5::jsonb, 0.8)
+      `,
+      [
+        runId,
+        candidateId,
+        candidate.sourceUrl,
+        extractDomain(candidate.sourceUrl),
+        JSON.stringify({ providerName: candidate.name })
+      ]
+    );
+  }
+
+  if (candidate.email) {
+    await researchDb.query(
+      `
+        insert into contact_candidates
+          (candidate_id, email, email_verified, source_url, confidence, disposition)
+        values
+          ($1, $2, false, $3, 0.6, 'PENDING')
+      `,
+      [candidateId, candidate.email, candidate.sourceUrl || null]
+    );
+  }
+
+  const services = [...new Set((candidate.services || []).map((service) => service.trim()).filter(Boolean))];
+  for (const service of services) {
+    await researchDb.query(
+      `
+        insert into service_findings
+          (candidate_id, service_name, availability_status, source_url, confidence)
+        values
+          ($1, $2, 'DOCUMENTED', $3, 0.8)
+      `,
+      [candidateId, service, candidate.sourceUrl || null]
+    );
+  }
+
   const gate = await evaluateProvider(candidate);
   const updated = await researchDb.query(
     `
@@ -36,12 +115,15 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
       set gate_decision = $2,
           gate_confidence = $3,
           gate_reasons = $4::jsonb,
-          lifecycle_status = case when $2 = 'NEW' then 'QUALIFIED_FOR_REVIEW' else 'GATED' end,
+          lifecycle_status = case
+            when $2 in ('NEW', 'NEEDS_REVIEW', 'SEEN_BEFORE') then 'QUALIFIED_FOR_REVIEW'
+            else 'GATED'
+          end,
           updated_at = now()
       where id = $1
       returning *
     `,
-    [inserted.rows[0].id, gate.decision, gate.confidence, JSON.stringify(gate.reasons)]
+    [candidateId, gate.decision, gate.confidence, JSON.stringify(gate.reasons)]
   );
 
   await researchDb.query(
@@ -51,13 +133,41 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
     `,
     [
       runId,
-      inserted.rows[0].id,
+      candidateId,
       `Provider Gate decision: ${gate.decision}`,
       JSON.stringify(gate)
     ]
   );
 
   return { candidate: updated.rows[0], gate };
+}
+
+async function ensureCampaignTarget(campaignId: string, facilityId: string, candidate: Record<string, unknown>) {
+  if (!operationalDb) throw new Error('Operational database is not configured.');
+
+  const targetResult = await operationalDb.query(
+    `
+      insert into campaign_targets
+        (campaign_id, facility_id, status, gate_decision, gate_confidence, gate_reasons)
+      values
+        ($1,$2,'RESEARCHING',$3,$4,$5::jsonb)
+      on conflict (campaign_id, facility_id) do update set
+        gate_decision = excluded.gate_decision,
+        gate_confidence = excluded.gate_confidence,
+        gate_reasons = excluded.gate_reasons,
+        updated_at = now()
+      returning *
+    `,
+    [
+      campaignId,
+      facilityId,
+      candidate.gate_decision,
+      candidate.gate_confidence,
+      JSON.stringify(candidate.gate_reasons || [])
+    ]
+  );
+
+  return targetResult.rows[0];
 }
 
 export async function promoteResearchCandidate(candidateId: string, campaignId?: string, override = false) {
@@ -71,9 +181,42 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
   const candidate = source.rows[0];
   if (!candidate) throw new Error('Research candidate was not found.');
 
-  const allowed = ['NEW', 'NEEDS_REVIEW', 'SEEN_BEFORE'];
+  const allowed = ['NEW', 'NEEDS_REVIEW'];
   if (!override && !allowed.includes(candidate.gate_decision)) {
     throw new Error(`Candidate is gated as ${candidate.gate_decision}; explicit override is required to promote it.`);
+  }
+
+  const profile = PROVIDER_TYPE_PROFILES.find((item) => item.id === candidate.provider_type);
+  const requiredCapabilities = profile?.requiredCapabilities || [];
+  if (!override && requiredCapabilities.length > 0) {
+    const findings = await researchDb.query(
+      'select service_name from service_findings where candidate_id = $1',
+      [candidateId]
+    );
+    const documented = new Set(
+      findings.rows.map((row) => String(row.service_name).trim().toLowerCase())
+    );
+    const missing = requiredCapabilities.filter(
+      (capability) => !documented.has(capability.toLowerCase())
+    );
+    if (missing.length > 0) {
+      throw new Error(`Required capabilities not yet documented: ${missing.join(', ')}`);
+    }
+  }
+
+  if (candidate.operational_facility_id) {
+    const existing = await operationalDb.query(
+      'select * from facilities where id = $1',
+      [candidate.operational_facility_id]
+    );
+    const facility = existing.rows[0];
+    if (!facility) throw new Error('Candidate points to an operational facility that no longer exists.');
+
+    const target = campaignId
+      ? await ensureCampaignTarget(campaignId, facility.id, candidate)
+      : null;
+
+    return { facility, target, reused: true };
   }
 
   const facilityResult = await operationalDb.query(
@@ -128,31 +271,9 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
     );
   }
 
-  let target = null;
-  if (campaignId) {
-    const targetResult = await operationalDb.query(
-      `
-        insert into campaign_targets
-          (campaign_id, facility_id, status, gate_decision, gate_confidence, gate_reasons)
-        values
-          ($1,$2,'RESEARCHING',$3,$4,$5::jsonb)
-        on conflict (campaign_id, facility_id) do update set
-          gate_decision = excluded.gate_decision,
-          gate_confidence = excluded.gate_confidence,
-          gate_reasons = excluded.gate_reasons,
-          updated_at = now()
-        returning *
-      `,
-      [
-        campaignId,
-        facility.id,
-        candidate.gate_decision,
-        candidate.gate_confidence,
-        JSON.stringify(candidate.gate_reasons || [])
-      ]
-    );
-    target = targetResult.rows[0];
-  }
+  const target = campaignId
+    ? await ensureCampaignTarget(campaignId, facility.id, candidate)
+    : null;
 
   await researchDb.query(
     `
@@ -165,5 +286,5 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
     [candidateId, facility.id]
   );
 
-  return { facility, target };
+  return { facility, target, reused: false };
 }

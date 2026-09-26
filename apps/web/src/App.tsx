@@ -1,5 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowDownToLine,
   ArrowRight,
   Building2,
   CheckCircle2,
@@ -9,7 +10,10 @@ import {
   LayoutDashboard,
   Mail,
   MapPinned,
+  Plus,
+  RefreshCw,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
   Tags,
@@ -32,11 +36,42 @@ type ResearchRun = {
   country?: string | null;
   city?: string | null;
   status: string;
+  candidate_count?: number;
+  new_count?: number;
+  promoted_count?: number;
   created_at: string;
+};
+
+type ResearchCandidate = {
+  id: string;
+  provider_name: string;
+  provider_type?: string | null;
+  city?: string | null;
+  country?: string | null;
+  email?: string | null;
+  website?: string | null;
+  gate_decision?: string | null;
+  gate_confidence?: number | null;
+  lifecycle_status: string;
+  evidence_count: number;
+  contact_count: number;
+  service_count: number;
+  pricing_count: number;
+};
+
+type Campaign = {
+  id: string;
+  name: string;
+  research_run_id?: string | null;
+  status: string;
+  target_count: number;
+  ready_count: number;
+  follow_up_count: number;
 };
 
 type QueueTarget = {
   id: string;
+  campaign_id?: string;
   campaign_name: string;
   facility_name: string;
   city?: string | null;
@@ -49,7 +84,26 @@ type QueueTarget = {
   primary_email?: string;
   pricing_requested: boolean;
   psa_needed: boolean;
+  agreement_status?: string | null;
+  agreement_url?: string | null;
+  message_status?: string | null;
   next_follow_up_at?: string | null;
+};
+
+type CandidateDraft = {
+  name: string;
+  city: string;
+  website: string;
+  email: string;
+  phone: string;
+  sourceUrl: string;
+  services: string[];
+};
+
+type ProviderTypeProfile = {
+  id: string;
+  label: string;
+  requiredCapabilities: string[];
 };
 
 const nav = [
@@ -59,17 +113,6 @@ const nav = [
   ['Pricing', Tags],
   ['Agreements', FileText],
   ['Evidence', ShieldCheck]
-] as const;
-
-const providerTypes = [
-  ['dental', 'Dental'],
-  ['occupational_health', 'Occupational Health'],
-  ['hospital', 'Hospital / Multispecialty'],
-  ['laboratory', 'Laboratory'],
-  ['cardiology', 'Cardiology'],
-  ['vaccination', 'Vaccination / Travel Medicine'],
-  ['imaging', 'Imaging'],
-  ['audiology', 'Audiology']
 ] as const;
 
 function StatusPill({ status }: { status: string }) {
@@ -90,29 +133,69 @@ function App() {
   const [activeNav, setActiveNav] = useState('Research');
   const [health, setHealth] = useState<Health | null>(null);
   const [runs, setRuns] = useState<ResearchRun[]>([]);
+  const [providerProfiles, setProviderProfiles] = useState<ProviderTypeProfile[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [queue, setQueue] = useState<QueueTarget[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState('');
+  const selectedRunRef = useRef('');
+  const [candidates, setCandidates] = useState<ResearchCandidate[]>([]);
   const [prompt, setPrompt] = useState('Find dental providers in South Africa capable of comprehensive dental evaluations, bitewings, and panoramic radiographs. Exclude providers we already know or have already researched. Find usable contact information and prepare qualified targets for outreach.');
   const [providerType, setProviderType] = useState('dental');
   const [country, setCountry] = useState('South Africa');
   const [city, setCity] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [busyKey, setBusyKey] = useState('');
+  const [candidateDraft, setCandidateDraft] = useState<CandidateDraft>({
+    name: '', city: '', website: '', email: '', phone: '', sourceUrl: '', services: []
+  });
+
+  const selectedRun = runs.find((run) => run.id === selectedRunId) || null;
+  const selectedCampaign = campaigns.find((campaign) => campaign.research_run_id === selectedRunId) || null;
+  const selectedProfile = providerProfiles.find(
+    (profile) => profile.id === (selectedRun?.provider_type || providerType)
+  ) || null;
 
   async function refresh() {
-    const [healthResponse, runsResponse, queueResponse] = await Promise.all([
+    const [healthResponse, providerTypesResponse, runsResponse, campaignsResponse, queueResponse] = await Promise.all([
       fetch('/api/health').then((r) => r.json()).catch(() => null),
+      fetch('/api/provider-types').then((r) => r.json()).catch(() => ({ providerTypes: [] })),
       fetch('/api/research-runs').then((r) => r.json()).catch(() => ({ runs: [] })),
+      fetch('/api/campaigns').then((r) => r.json()).catch(() => ({ campaigns: [] })),
       fetch('/api/outreach/queue').then((r) => r.json()).catch(() => ({ targets: [] }))
     ]);
 
     setHealth(healthResponse);
+    setProviderProfiles(providerTypesResponse.providerTypes ?? []);
     setRuns(runsResponse.runs ?? []);
+    setCampaigns(campaignsResponse.campaigns ?? []);
     setQueue(queueResponse.targets ?? []);
+    setSelectedRunId((current) => current || runsResponse.runs?.[0]?.id || '');
+  }
+
+  async function loadCandidates(runId: string) {
+    if (!runId) {
+      setCandidates([]);
+      return;
+    }
+    const response = await fetch(`/api/research-runs/${runId}/candidates`);
+    const body = await response.json().catch(() => ({}));
+    if (selectedRunRef.current !== runId) return;
+    if (!response.ok) {
+      setNotice(body.error || 'Could not load provider candidates.');
+      return;
+    }
+    setCandidates(body.candidates ?? []);
   }
 
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    selectedRunRef.current = selectedRunId;
+    void loadCandidates(selectedRunId);
+  }, [selectedRunId]);
 
   async function startResearch(event: FormEvent) {
     event.preventDefault();
@@ -138,13 +221,107 @@ function App() {
         return;
       }
 
-      setNotice('Research run queued. The research worker is the next build slice.');
+      setSelectedRunId(body.run?.id || '');
+      setNotice('Research run created. Candidate ingestion and provider-gate review are ready.');
       await refresh();
     } catch {
       setNotice('The API is not reachable yet.');
     } finally {
       setSubmitting(false);
     }
+  }
+
+
+  async function ensureCampaignForSelectedRun(): Promise<Campaign | null> {
+    if (!selectedRunId) return null;
+    const existing = campaigns.find((campaign) => campaign.research_run_id === selectedRunId);
+    if (existing) return existing;
+
+    const response = await fetch(`/api/research-runs/${selectedRunId}/campaign`, { method: 'POST' });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.campaign) {
+      setNotice(body.error || 'Could not create the campaign.');
+      return null;
+    }
+    await refresh();
+    return body.campaign as Campaign;
+  }
+
+  async function addCandidate(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedRun || !candidateDraft.name.trim()) return;
+    setBusyKey('candidate-add');
+    setNotice('');
+
+    const response = await fetch(`/api/research-runs/${selectedRun.id}/candidates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: candidateDraft.name,
+        city: candidateDraft.city || undefined,
+        country: selectedRun.country || country,
+        website: candidateDraft.website || undefined,
+        email: candidateDraft.email || undefined,
+        phone: candidateDraft.phone || undefined,
+        sourceUrl: candidateDraft.sourceUrl || undefined,
+        providerType: selectedRun.provider_type || providerType,
+        services: candidateDraft.services
+      })
+    });
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setNotice(body.error || 'Could not add the provider candidate.');
+      setBusyKey('');
+      return;
+    }
+
+    setCandidateDraft({ name: '', city: '', website: '', email: '', phone: '', sourceUrl: '', services: [] });
+    setNotice(`Candidate added and gated as ${body.gate?.decision || 'reviewed'}.`);
+    await Promise.all([loadCandidates(selectedRun.id), refresh()]);
+    setBusyKey('');
+  }
+
+  async function promoteCandidate(candidate: ResearchCandidate) {
+    const campaign = await ensureCampaignForSelectedRun();
+    if (!campaign) return;
+
+    setBusyKey(candidate.id);
+    setNotice('');
+    const response = await fetch(`/api/research-candidates/${candidate.id}/promote`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ campaignId: campaign.id, override: false })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setNotice(body.error || 'Could not promote the provider.');
+      setBusyKey('');
+      return;
+    }
+
+    setNotice(`${candidate.provider_name} moved into the outreach campaign.`);
+    await Promise.all([loadCandidates(selectedRunId), refresh()]);
+    setBusyKey('');
+  }
+
+  async function prepareTarget(target: QueueTarget) {
+    setBusyKey(target.id);
+    setNotice('');
+    const response = await fetch(`/api/campaign-targets/${target.id}/prepare`, { method: 'POST' });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setNotice(body.error || 'Could not prepare the outreach target.');
+      setBusyKey('');
+      return;
+    }
+
+    setNotice(body.readyForExport
+      ? `${target.facility_name} is ready for the Outlook export.`
+      : `${target.facility_name} is prepared but waiting on the provider agreement.`
+    );
+    await refresh();
+    setBusyKey('');
   }
 
   const readyCount = useMemo(
@@ -154,6 +331,11 @@ function App() {
   const followUpCount = useMemo(
     () => queue.filter((item) => item.status === 'NEED_FOLLOW_UP').length,
     [queue]
+  );
+
+  const newCandidateCount = useMemo(
+    () => candidates.filter((item) => item.gate_decision === 'NEW').length,
+    [candidates]
   );
 
   const operationalReady = Boolean(health?.databases.operational.ok);
@@ -214,6 +396,8 @@ function App() {
           </div>
         </header>
 
+        {notice && <div className="notice global-notice">{notice}</div>}
+
         <section className="command-card">
           <div className="command-heading">
             <div className="spark-icon"><Sparkles size={20} /></div>
@@ -234,8 +418,8 @@ function App() {
               <label>
                 <span>Provider type</span>
                 <select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
-                  {providerTypes.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                  {providerProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>{profile.label}</option>
                   ))}
                 </select>
               </label>
@@ -253,8 +437,6 @@ function App() {
               </button>
             </div>
           </form>
-
-          {notice && <div className="notice">{notice}</div>}
 
           <div className="guardrails">
             <span><ShieldCheck size={16} /> Existing-network exclusion</span>
@@ -275,92 +457,223 @@ function App() {
           <article>
             <span className="metric-icon"><UsersRound size={19} /></span>
             <div>
-              <p>Queue targets</p>
-              <strong>{queue.length}</strong>
+              <p>Selected candidates</p>
+              <strong>{candidates.length}</strong>
             </div>
           </article>
           <article>
             <span className="metric-icon"><CheckCircle2 size={19} /></span>
             <div>
-              <p>Ready for outreach</p>
-              <strong>{readyCount}</strong>
+              <p>New after gate</p>
+              <strong>{newCandidateCount}</strong>
             </div>
           </article>
           <article>
             <span className="metric-icon"><LayoutDashboard size={19} /></span>
             <div>
-              <p>Follow-up due</p>
-              <strong>{followUpCount}</strong>
+              <p>Campaign targets</p>
+              <strong>{selectedCampaign?.target_count ?? 0}</strong>
             </div>
           </article>
         </section>
 
-        <section className="workspace-grid">
-          <article className="panel research-panel">
+        <section className="research-layout">
+          <article className="panel run-browser">
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Research</p>
-                <h3>Recent runs</h3>
+                <h3>Runs</h3>
               </div>
-              <button className="text-button" onClick={() => void refresh()}>Refresh</button>
+              <button className="icon-button" onClick={() => void refresh()} title="Refresh">
+                <RefreshCw size={15} />
+              </button>
             </div>
 
             {runs.length === 0 ? (
-              <div className="empty-state">
+              <div className="empty-state compact">
                 <Search size={24} />
                 <strong>No research runs yet</strong>
-                <p>Your first provider-development request will appear here.</p>
+                <p>Create the first provider-development request above.</p>
               </div>
             ) : (
               <div className="run-list">
-                {runs.slice(0, 6).map((run) => (
-                  <div className="run-row" key={run.id}>
+                {runs.map((run) => (
+                  <button
+                    className={selectedRunId === run.id ? 'run-row selected' : 'run-row'}
+                    key={run.id}
+                    onClick={() => setSelectedRunId(run.id)}
+                  >
                     <div className="run-leading">
                       <span className="run-icon"><Search size={17} /></span>
                       <div>
                         <strong>{run.prompt}</strong>
                         <span>{[run.provider_type, run.city, run.country].filter(Boolean).join(' · ')}</span>
+                        <small>{run.candidate_count ?? 0} candidates · {run.promoted_count ?? 0} promoted</small>
                       </div>
                     </div>
                     <StatusPill status={run.status} />
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
           </article>
 
-          <article className="panel">
+          <article className="panel candidate-workspace">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Pipeline</p>
-                <h3>Outreach queue</h3>
+                <p className="eyebrow">Provider Gate</p>
+                <h3>{selectedRun ? `${selectedRun.country || 'Research'} · candidate review` : 'Select a research run'}</h3>
               </div>
-              <span className="small-muted">Top priority</span>
+              {selectedRun && (
+                <button className="ghost-button compact-button" onClick={() => void ensureCampaignForSelectedRun()}>
+                  <Plus size={15} />
+                  {selectedCampaign ? 'Campaign linked' : 'Create campaign'}
+                </button>
+              )}
             </div>
 
+            {selectedRun ? (
+              <>
+                <form className="candidate-capture" onSubmit={addCandidate}>
+                  <div className="candidate-capture-title">
+                    <div>
+                      <strong>Candidate intake</strong>
+                      <span>Manual intake and automated research workers use the same provider gate.</span>
+                    </div>
+                    <button className="research-button mini" disabled={busyKey === 'candidate-add' || !candidateDraft.name.trim()}>
+                      <Plus size={15} /> Add & gate
+                    </button>
+                  </div>
+                  <div className="candidate-fields">
+                    <input placeholder="Provider name" value={candidateDraft.name} onChange={(e) => setCandidateDraft({ ...candidateDraft, name: e.target.value })} />
+                    <input placeholder="City" value={candidateDraft.city} onChange={(e) => setCandidateDraft({ ...candidateDraft, city: e.target.value })} />
+                    <input placeholder="Website" value={candidateDraft.website} onChange={(e) => setCandidateDraft({ ...candidateDraft, website: e.target.value })} />
+                    <input placeholder="Email" type="email" value={candidateDraft.email} onChange={(e) => setCandidateDraft({ ...candidateDraft, email: e.target.value })} />
+                    <input placeholder="Phone" value={candidateDraft.phone} onChange={(e) => setCandidateDraft({ ...candidateDraft, phone: e.target.value })} />
+                    <input placeholder="Source URL" value={candidateDraft.sourceUrl} onChange={(e) => setCandidateDraft({ ...candidateDraft, sourceUrl: e.target.value })} />
+                  </div>
+                  {selectedProfile && selectedProfile.requiredCapabilities.length > 0 && (
+                    <div className="capability-checklist">
+                      <span className="capability-label">Documented at this provider</span>
+                      <div>
+                        {selectedProfile.requiredCapabilities.map((capability) => {
+                          const checked = candidateDraft.services.includes(capability);
+                          return (
+                            <label className="capability-option" key={capability}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => setCandidateDraft({
+                                  ...candidateDraft,
+                                  services: checked
+                                    ? candidateDraft.services.filter((service) => service !== capability)
+                                    : [...candidateDraft.services, capability]
+                                })}
+                              />
+                              <span>{capability}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </form>
+
+                <div className="candidate-list">
+                  {candidates.length === 0 ? (
+                    <div className="empty-state compact">
+                      <Building2 size={24} />
+                      <strong>No candidates in this run yet</strong>
+                      <p>Research workers and manual intake both enter through this exact gate.</p>
+                    </div>
+                  ) : candidates.map((candidate) => {
+                    const promotable = ['NEW', 'NEEDS_REVIEW'].includes(candidate.gate_decision || '')
+                      && (!selectedProfile || candidate.service_count >= selectedProfile.requiredCapabilities.length);
+                    return (
+                      <div className="candidate-row" key={candidate.id}>
+                        <div className="candidate-main">
+                          <div className="candidate-title-line">
+                            <strong>{candidate.provider_name}</strong>
+                            <StatusPill status={candidate.gate_decision || 'PENDING'} />
+                          </div>
+                          <span>{[candidate.city, candidate.country].filter(Boolean).join(', ') || 'Location not captured'}</span>
+                          <div className="candidate-contact-line">
+                            {candidate.email && <span>{candidate.email}</span>}
+                            {candidate.website && <a href={candidate.website} target="_blank" rel="noreferrer">website</a>}
+                          </div>
+                          <div className="evidence-chips">
+                            <span>{candidate.evidence_count} evidence</span>
+                            <span>{candidate.contact_count} contacts</span>
+                            <span>{candidate.service_count} services</span>
+                            <span>{candidate.pricing_count} prices</span>
+                          </div>
+                        </div>
+                        <div className="candidate-actions">
+                          <small>{Math.round((candidate.gate_confidence || 0) * 100)}% gate confidence</small>
+                          {candidate.lifecycle_status === 'PROMOTED' ? (
+                            <StatusPill status="PROMOTED" />
+                          ) : (
+                            <button
+                              className="primary-button compact-button"
+                              disabled={!promotable || busyKey === candidate.id}
+                              onClick={() => void promoteCandidate(candidate)}
+                            >
+                              <ArrowRight size={14} /> Promote
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="empty-state"><Search size={24} /><strong>Select a research run</strong></div>
+            )}
+          </article>
+        </section>
+
+        <section className="panel outreach-panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Execution queue</p>
+              <h3>Outreach preparation</h3>
+            </div>
+            <div className="top-actions">
+              <a className="primary-button link-button" href="/api/outreach/export.csv">
+                <ArrowDownToLine size={15} /> Export Outlook CSV
+              </a>
+            </div>
+          </div>
+
+          <div className="queue-list">
             {queue.length === 0 ? (
               <div className="empty-state compact">
                 <Mail size={24} />
                 <strong>No outreach targets yet</strong>
-                <p>Qualified research candidates will flow here after the provider gate.</p>
+                <p>Promote a qualified provider into the linked campaign first.</p>
               </div>
-            ) : (
-              <div className="queue-list">
-                {queue.slice(0, 7).map((item) => (
-                  <div className="queue-row" key={item.id}>
-                    <div>
-                      <strong>{item.facility_name}</strong>
-                      <span>{[item.city, item.country].filter(Boolean).join(', ')}</span>
-                    </div>
-                    <div className="queue-meta">
-                      <span>{item.priority}</span>
-                      <StatusPill status={item.status} />
-                    </div>
-                  </div>
-                ))}
+            ) : queue.slice(0, 10).map((item) => (
+              <div className="queue-row" key={item.id}>
+                <div>
+                  <strong>{item.facility_name}</strong>
+                  <span>{[item.city, item.country, item.primary_email].filter(Boolean).join(' · ')}</span>
+                </div>
+                <div className="queue-meta expanded">
+                  <StatusPill status={item.psa_needed ? (item.agreement_status || 'NOT REQUESTED') : 'NOT REQUIRED'} />
+                  <StatusPill status={item.message_status || 'NOT PREPARED'} />
+                  <StatusPill status={item.status} />
+                  <button
+                    className="ghost-button compact-button"
+                    disabled={busyKey === item.id || !item.primary_email}
+                    onClick={() => void prepareTarget(item)}
+                  >
+                    <Send size={14} /> Prepare
+                  </button>
+                </div>
               </div>
-            )}
-          </article>
+            ))}
+          </div>
         </section>
 
         <section className="panel foundation-panel">

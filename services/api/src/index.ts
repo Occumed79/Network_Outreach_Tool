@@ -3,13 +3,14 @@ import cors from 'cors';
 import { z } from 'zod';
 import {
   PROVIDER_TYPE_PROFILES,
+  RESEARCH_PRESETS,
   normalizeProviderName,
   type ProviderCandidate
 } from '@network-outreach/core';
 import { config } from './config.js';
 import { databaseHealth, operationalDb, researchDb } from './db.js';
 import { evaluateProvider } from './providerGate.js';
-import { addResearchCandidate, promoteResearchCandidate } from './research.js';
+import { addResearchCandidate, listResearchCandidates, promoteResearchCandidate } from './research.js';
 import { exportReadyQueueCsv, prepareCampaignTarget } from './outreach.js';
 
 const app = express();
@@ -34,6 +35,10 @@ app.get('/api/provider-types', (_req, res) => {
   res.json({ providerTypes: PROVIDER_TYPE_PROFILES });
 });
 
+app.get('/api/research-presets', (_req, res) => {
+  res.json({ presets: RESEARCH_PRESETS });
+});
+
 const candidateSchema = z.object({
   name: z.string().min(1),
   country: z.string().min(1),
@@ -43,7 +48,8 @@ const candidateSchema = z.object({
   phone: z.string().nullish(),
   email: z.string().email().nullish(),
   providerType: z.string().nullish(),
-  sourceUrl: z.string().url().nullish()
+  sourceUrl: z.string().url().nullish(),
+  services: z.array(z.string().min(1)).max(50).optional()
 });
 
 app.post('/api/provider-gate/evaluate', async (req, res) => {
@@ -107,9 +113,29 @@ app.get('/api/research-runs', async (_req, res) => {
   }
 
   const result = await researchDb.query(
-    'select * from research_runs order by created_at desc limit 50'
+    `
+      select
+        rr.*,
+        (select count(*)::int from research_candidates rc where rc.research_run_id = rr.id) as candidate_count,
+        (select count(*)::int from research_candidates rc where rc.research_run_id = rr.id and rc.gate_decision = 'NEW') as new_count,
+        (select count(*)::int from research_candidates rc where rc.research_run_id = rr.id and rc.lifecycle_status = 'PROMOTED') as promoted_count
+      from research_runs rr
+      order by rr.created_at desc
+      limit 50
+    `
   );
   res.json({ runs: result.rows });
+});
+
+app.get('/api/research-runs/:runId/candidates', async (req, res) => {
+  try {
+    const candidates = await listResearchCandidates(req.params.runId);
+    res.json({ candidates });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Could not load research candidates'
+    });
+  }
 });
 
 app.post('/api/research-runs/:runId/candidates', async (req, res) => {
@@ -130,6 +156,59 @@ app.post('/api/research-runs/:runId/candidates', async (req, res) => {
       error: error instanceof Error ? error.message : 'Could not add research candidate'
     });
   }
+});
+
+app.post('/api/research-runs/:runId/campaign', async (req, res) => {
+  if (!researchDb || !operationalDb) {
+    res.status(503).json({ error: 'Both databases must be configured.' });
+    return;
+  }
+
+  const runResult = await researchDb.query(
+    'select * from research_runs where id = $1',
+    [req.params.runId]
+  );
+  const run = runResult.rows[0];
+  if (!run) {
+    res.status(404).json({ error: 'Research run was not found.' });
+    return;
+  }
+
+  const existing = await operationalDb.query(
+    'select * from campaigns where research_run_id = $1 limit 1',
+    [run.id]
+  );
+  if (existing.rows[0]) {
+    res.json({ campaign: existing.rows[0], reused: true });
+    return;
+  }
+
+  const name = [run.country, run.provider_type]
+    .filter(Boolean)
+    .map((value: string) => value.replaceAll('_', ' '))
+    .join(' · ');
+
+  const created = await operationalDb.query(
+    `
+      insert into campaigns
+        (name, description, provider_type, country, city, original_request, status, owner, research_run_id)
+      values
+        ($1,$2,$3,$4,$5,$6,'ACTIVE',$7,$8)
+      returning *
+    `,
+    [
+      name || `Research ${run.id}`,
+      `Campaign created from research run ${run.id}`,
+      run.provider_type,
+      run.country,
+      run.city,
+      run.prompt,
+      run.requested_by || 'Alex',
+      run.id
+    ]
+  );
+
+  res.status(201).json({ campaign: created.rows[0], reused: false });
 });
 
 app.post('/api/research-candidates/:candidateId/promote', async (req, res) => {
@@ -235,6 +314,7 @@ app.get('/api/outreach/queue', async (_req, res) => {
     `
       select
         ct.id,
+        ct.campaign_id,
         c.name as campaign_name,
         f.name as facility_name,
         f.city,

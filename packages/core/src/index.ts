@@ -37,6 +37,7 @@ export interface ProviderCandidate {
   email?: string | null;
   providerType?: string | null;
   sourceUrl?: string | null;
+  services?: string[];
 }
 
 export interface GateResult {
@@ -55,6 +56,17 @@ export interface ProviderTypeProfile {
   requiredCapabilities: string[];
   preferredContactRoles: string[];
   excludedEntityKinds: string[];
+}
+
+export interface ResearchPreset {
+  id: string;
+  label: string;
+  providerType: string;
+  country: string;
+  city?: string;
+  prompt: string;
+  requiredCapabilities: string[];
+  exclusionRules: string[];
 }
 
 export const PROVIDER_TYPE_PROFILES: ProviderTypeProfile[] = [
@@ -129,6 +141,18 @@ export const PROVIDER_TYPE_PROFILES: ProviderTypeProfile[] = [
     requiredCapabilities: ['Pure-tone audiometry'],
     preferredContactRoles: ['Clinic Manager', 'Audiology Lead', 'Operations Manager'],
     excludedEntityKinds: ['hearing-aid directory']
+  }
+];
+
+export const RESEARCH_PRESETS: ResearchPreset[] = [
+  {
+    id: 'south-africa-dental',
+    label: 'South Africa Dental',
+    providerType: 'dental',
+    country: 'South Africa',
+    prompt: 'Find direct dental practices and dental clinics in South Africa capable of comprehensive dental evaluations, bitewing radiographs, and panoramic radiographs. Exclude referral networks, insurance networks, aggregators, directories, third-party administrators, and providers already known to Occu-Med or already investigated. Find usable provider contact information, favor named practice managers/owners/operations contacts, preserve source evidence, capture posted pricing when available, and prepare qualified targets for outreach.',
+    requiredCapabilities: ['Comprehensive dental examination', 'Bitewing radiographs', 'Panoramic radiograph'],
+    exclusionRules: ['direct providers only', 'exclude aggregators and referral networks', 'exclude already-known providers', 'exclude previously investigated providers unless follow-up is due']
   }
 ];
 
