@@ -4,7 +4,7 @@ import { operationalDb } from './db.js';
 function replaceTemplate(template: string, values: Record<string, string>): string {
   let result = template;
   for (const [key, value] of Object.entries(values)) {
-    result = result.replaceTemplate(`{{${key}}}`, value);
+    result = result.replaceAll(`{{${key}}}`, value);
   }
   return result;
 }
@@ -234,7 +234,7 @@ export async function prepareCampaignTarget(targetId: string) {
 
 function csvEscape(value: unknown): string {
   const text = value == null ? '' : String(value);
-  if (/[",\n\r]/.test(text)) return `"${text.replaceTemplate('"', '""')}"`;
+  if (/[",\n\r]/.test(text)) return `"${text.replaceAll('"', '""')}"`;
   return text;
 }
 
@@ -264,7 +264,7 @@ export async function exportReadyQueueCsv(): Promise<string> {
       join facilities f on f.id = ct.facility_id
       left join contacts pc on pc.id = om.contact_id
       left join lateral (
-        select file_name, storage_url
+        select file_name, storage_url, generation_status
         from agreement_documents
         where campaign_target_id = ct.id
         order by created_at desc
