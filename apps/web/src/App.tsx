@@ -221,9 +221,11 @@ function App() {
         return;
       }
 
-      setSelectedRunId(body.run?.id || '');
-      setNotice('Research run created. Candidate ingestion and provider-gate review are ready.');
+      const runId = body.run?.id || '';
+      setSelectedRunId(runId);
+      setNotice('Research run created. Starting automated research…');
       await refresh();
+      if (runId) void executeRun(runId);
     } catch {
       setNotice('The API is not reachable yet.');
     } finally {
@@ -231,6 +233,44 @@ function App() {
     }
   }
 
+
+  async function executeRun(runId: string) {
+    setBusyKey(`research:${runId}`);
+    setNotice('Research is running across the configured search sources…');
+    setRuns((current) => current.map((run) => (
+      run.id === runId ? { ...run, status: 'RUNNING' } : run
+    )));
+
+    try {
+      const response = await fetch(`/api/research-runs/${runId}/execute`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ maxQueries: 4, maxResultsPerQuery: 8 })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setNotice(body.error || 'Automated research failed.');
+        return;
+      }
+
+      if (body.status === 'COMPLETE') {
+        setNotice(
+          `Research complete: ${body.searchResults || 0} web results → ${body.newCandidates || 0} new provider candidates.`
+        );
+      } else if (body.status === 'WAITING_FOR_AI') {
+        setNotice(
+          `Web evidence collected (${body.searchResults || 0} results). Add an AI research model secret to extract providers automatically.`
+        );
+      } else if (body.status === 'WAITING_FOR_SEARCH') {
+        setNotice('No web research API is configured yet. Add Tavily or Exa as a runtime secret.');
+      } else {
+        setNotice(`Research finished with status ${body.status || 'UNKNOWN'}.`);
+      }
+    } finally {
+      await Promise.all([refresh(), loadCandidates(runId)]);
+      setBusyKey('');
+    }
+  }
 
   async function ensureCampaignForSelectedRun(): Promise<Campaign | null> {
     if (!selectedRunId) return null;
@@ -525,10 +565,20 @@ function App() {
                 <h3>{selectedRun ? `${selectedRun.country || 'Research'} · candidate review` : 'Select a research run'}</h3>
               </div>
               {selectedRun && (
-                <button className="ghost-button compact-button" onClick={() => void ensureCampaignForSelectedRun()}>
-                  <Plus size={15} />
-                  {selectedCampaign ? 'Campaign linked' : 'Create campaign'}
-                </button>
+                <div className="top-actions">
+                  <button
+                    className="ghost-button compact-button"
+                    disabled={busyKey === `research:${selectedRun.id}`}
+                    onClick={() => void executeRun(selectedRun.id)}
+                  >
+                    <Search size={15} />
+                    {busyKey === `research:${selectedRun.id}` ? 'Researching…' : 'Run research'}
+                  </button>
+                  <button className="ghost-button compact-button" onClick={() => void ensureCampaignForSelectedRun()}>
+                    <Plus size={15} />
+                    {selectedCampaign ? 'Campaign linked' : 'Create campaign'}
+                  </button>
+                </div>
               )}
             </div>
 
