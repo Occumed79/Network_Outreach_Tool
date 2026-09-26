@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -137,6 +137,7 @@ function App() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [queue, setQueue] = useState<QueueTarget[]>([]);
   const [selectedRunId, setSelectedRunId] = useState('');
+  const selectedRunRef = useRef('');
   const [candidates, setCandidates] = useState<ResearchCandidate[]>([]);
   const [prompt, setPrompt] = useState('Find dental providers in South Africa capable of comprehensive dental evaluations, bitewings, and panoramic radiographs. Exclude providers we already know or have already researched. Find usable contact information and prepare qualified targets for outreach.');
   const [providerType, setProviderType] = useState('dental');
@@ -179,6 +180,7 @@ function App() {
     }
     const response = await fetch(`/api/research-runs/${runId}/candidates`);
     const body = await response.json().catch(() => ({}));
+    if (selectedRunRef.current !== runId) return;
     if (!response.ok) {
       setNotice(body.error || 'Could not load provider candidates.');
       return;
@@ -191,6 +193,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    selectedRunRef.current = selectedRunId;
     void loadCandidates(selectedRunId);
   }, [selectedRunId]);
 
