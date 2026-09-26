@@ -71,6 +71,15 @@ export function targetReadiness(psaNeeded: boolean, agreementStatus?: string | n
   return { status: 'WAITING_ON_PSA', readyForExport: false } as const;
 }
 
+export function shouldRequestAgreement(psaNeeded: boolean, agreementStatus?: string | null) {
+  return psaNeeded && agreementStatus !== 'GENERATED';
+}
+
+export function nextPreparationStatus(currentStatus: string, readinessStatus: string) {
+  const preparationStates = new Set(['NOT_STARTED', 'RESEARCHING', 'READY', 'WAITING_ON_PSA']);
+  return preparationStates.has(currentStatus) ? readinessStatus : currentStatus;
+}
+
 export async function prepareCampaignTarget(targetId: string) {
   if (!operationalDb) throw new Error('Operational database is not configured.');
 
@@ -176,7 +185,7 @@ export async function prepareCampaignTarget(targetId: string) {
   );
 
   let agreement = currentAgreement.rows[0] || null;
-  if (!agreement && row.psa_needed) {
+  if (shouldRequestAgreement(Boolean(row.psa_needed), agreement?.generation_status)) {
     const address = [
       row.address,
       row.city,
@@ -218,6 +227,7 @@ export async function prepareCampaignTarget(targetId: string) {
   }
 
   const readiness = targetReadiness(Boolean(row.psa_needed), agreement?.generation_status);
+  const nextStatus = nextPreparationStatus(String(row.target_status), readiness.status);
 
   await operationalDb.query(
     `
@@ -226,10 +236,15 @@ export async function prepareCampaignTarget(targetId: string) {
           updated_at = now()
       where id = $1
     `,
-    [targetId, readiness.status]
+    [targetId, nextStatus]
   );
 
-  return { message, agreement, ...readiness };
+  return {
+    message,
+    agreement,
+    status: nextStatus,
+    readyForExport: nextStatus === 'READY' && readiness.readyForExport
+  };
 }
 
 function csvEscape(value: unknown): string {
