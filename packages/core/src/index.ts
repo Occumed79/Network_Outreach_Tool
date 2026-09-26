@@ -37,6 +37,7 @@ export interface ProviderCandidate {
   email?: string | null;
   providerType?: string | null;
   sourceUrl?: string | null;
+  services?: string[];
 }
 
 export interface GateResult {
