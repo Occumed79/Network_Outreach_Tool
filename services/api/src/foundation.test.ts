@@ -5,7 +5,11 @@ import {
   RESEARCH_PRESETS,
   normalizeProviderName
 } from '@network-outreach/core';
-import { targetReadiness } from './outreach.js';
+import {
+  nextPreparationStatus,
+  shouldRequestAgreement,
+  targetReadiness
+} from './outreach.js';
 
 test('South Africa dental preset preserves required capabilities and exclusions', () => {
   const preset = RESEARCH_PRESETS.find((item) => item.id === 'south-africa-dental');
@@ -48,4 +52,20 @@ test('generated or non-required agreements allow export readiness', () => {
     targetReadiness(false, null),
     { status: 'READY', readyForExport: true }
   );
+});
+
+
+test('preparation preserves later outreach lifecycle states', () => {
+  assert.equal(nextPreparationStatus('CONTACTED', 'READY'), 'CONTACTED');
+  assert.equal(nextPreparationStatus('NEED_FOLLOW_UP', 'READY'), 'NEED_FOLLOW_UP');
+  assert.equal(nextPreparationStatus('DECLINED', 'READY'), 'DECLINED');
+  assert.equal(nextPreparationStatus('WAITING_ON_PSA', 'READY'), 'READY');
+});
+
+test('agreement generation retries every non-generated attempt', () => {
+  assert.equal(shouldRequestAgreement(true, 'WAITING_INTEGRATION'), true);
+  assert.equal(shouldRequestAgreement(true, 'GENERATOR_ERROR'), true);
+  assert.equal(shouldRequestAgreement(true, undefined), true);
+  assert.equal(shouldRequestAgreement(true, 'GENERATED'), false);
+  assert.equal(shouldRequestAgreement(false, undefined), false);
 });
