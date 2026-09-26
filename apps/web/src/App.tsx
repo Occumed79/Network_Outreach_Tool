@@ -175,7 +175,7 @@ function App() {
       setCandidates([]);
       return;
     }
-    const response = await fetch(\`/api/research-runs/\${runId}/candidates\`);
+    const response = await fetch(`/api/research-runs/${runId}/candidates`);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       setNotice(body.error || 'Could not load provider candidates.');
@@ -232,7 +232,7 @@ function App() {
     const existing = campaigns.find((campaign) => campaign.research_run_id === selectedRunId);
     if (existing) return existing;
 
-    const response = await fetch(\`/api/research-runs/\${selectedRunId}/campaign\`, { method: 'POST' });
+    const response = await fetch(`/api/research-runs/${selectedRunId}/campaign`, { method: 'POST' });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.campaign) {
       setNotice(body.error || 'Could not create the campaign.');
@@ -248,7 +248,7 @@ function App() {
     setBusyKey('candidate-add');
     setNotice('');
 
-    const response = await fetch(\`/api/research-runs/\${selectedRun.id}/candidates\`, {
+    const response = await fetch(`/api/research-runs/${selectedRun.id}/candidates`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -271,7 +271,7 @@ function App() {
     }
 
     setCandidateDraft({ name: '', city: '', website: '', email: '', phone: '', sourceUrl: '' });
-    setNotice(\`Candidate added and gated as \${body.gate?.decision || 'reviewed'}.\`);
+    setNotice(`Candidate added and gated as ${body.gate?.decision || 'reviewed'}.`);
     await Promise.all([loadCandidates(selectedRun.id), refresh()]);
     setBusyKey('');
   }
@@ -282,7 +282,7 @@ function App() {
 
     setBusyKey(candidate.id);
     setNotice('');
-    const response = await fetch(\`/api/research-candidates/\${candidate.id}/promote\`, {
+    const response = await fetch(`/api/research-candidates/${candidate.id}/promote`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ campaignId: campaign.id, override: false })
@@ -294,7 +294,7 @@ function App() {
       return;
     }
 
-    setNotice(\`\${candidate.provider_name} moved into the outreach campaign.\`);
+    setNotice(`${candidate.provider_name} moved into the outreach campaign.`);
     await Promise.all([loadCandidates(selectedRunId), refresh()]);
     setBusyKey('');
   }
@@ -302,7 +302,7 @@ function App() {
   async function prepareTarget(target: QueueTarget) {
     setBusyKey(target.id);
     setNotice('');
-    const response = await fetch(\`/api/campaign-targets/\${target.id}/prepare\`, { method: 'POST' });
+    const response = await fetch(`/api/campaign-targets/${target.id}/prepare`, { method: 'POST' });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       setNotice(body.error || 'Could not prepare the outreach target.');
@@ -311,8 +311,8 @@ function App() {
     }
 
     setNotice(body.readyForExport
-      ? \`\${target.facility_name} is ready for the Outlook export.\`
-      : \`\${target.facility_name} is prepared but waiting on the provider agreement.\`
+      ? `${target.facility_name} is ready for the Outlook export.`
+      : `${target.facility_name} is prepared but waiting on the provider agreement.`
     );
     await refresh();
     setBusyKey('');
@@ -516,7 +516,7 @@ function App() {
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Provider Gate</p>
-                <h3>{selectedRun ? \`\${selectedRun.country || 'Research'} · candidate review\` : 'Select a research run'}</h3>
+                <h3>{selectedRun ? `${selectedRun.country || 'Research'} · candidate review` : 'Select a research run'}</h3>
               </div>
               {selectedRun && (
                 <button className="ghost-button compact-button" onClick={() => void ensureCampaignForSelectedRun()}>
