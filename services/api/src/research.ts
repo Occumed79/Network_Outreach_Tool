@@ -2,6 +2,34 @@ import { extractDomain, normalizePhone, normalizeProviderName, type ProviderCand
 import { operationalDb, researchDb } from './db.js';
 import { evaluateProvider } from './providerGate.js';
 
+export async function listResearchCandidates(runId: string) {
+  if (!researchDb) throw new Error('Research database is not configured.');
+
+  const result = await researchDb.query(
+    `
+      select
+        rc.*,
+        (select count(*)::int from evidence_sources es where es.candidate_id = rc.id) as evidence_count,
+        (select count(*)::int from contact_candidates cc where cc.candidate_id = rc.id) as contact_count,
+        (select count(*)::int from service_findings sf where sf.candidate_id = rc.id) as service_count,
+        (select count(*)::int from pricing_findings pf where pf.candidate_id = rc.id) as pricing_count
+      from research_candidates rc
+      where rc.research_run_id = $1
+      order by
+        case rc.gate_decision
+          when 'NEW' then 0
+          when 'NEEDS_REVIEW' then 1
+          when 'SEEN_BEFORE' then 2
+          else 3
+        end,
+        rc.created_at desc
+    `,
+    [runId]
+  );
+
+  return result.rows;
+}
+
 export async function addResearchCandidate(runId: string, candidate: ProviderCandidate) {
   if (!researchDb) throw new Error('Research database is not configured.');
 
@@ -36,7 +64,10 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
       set gate_decision = $2,
           gate_confidence = $3,
           gate_reasons = $4::jsonb,
-          lifecycle_status = case when $2 = 'NEW' then 'QUALIFIED_FOR_REVIEW' else 'GATED' end,
+          lifecycle_status = case
+            when $2 in ('NEW', 'NEEDS_REVIEW', 'SEEN_BEFORE') then 'QUALIFIED_FOR_REVIEW'
+            else 'GATED'
+          end,
           updated_at = now()
       where id = $1
       returning *
@@ -60,6 +91,34 @@ export async function addResearchCandidate(runId: string, candidate: ProviderCan
   return { candidate: updated.rows[0], gate };
 }
 
+async function ensureCampaignTarget(campaignId: string, facilityId: string, candidate: Record<string, unknown>) {
+  if (!operationalDb) throw new Error('Operational database is not configured.');
+
+  const targetResult = await operationalDb.query(
+    `
+      insert into campaign_targets
+        (campaign_id, facility_id, status, gate_decision, gate_confidence, gate_reasons)
+      values
+        ($1,$2,'RESEARCHING',$3,$4,$5::jsonb)
+      on conflict (campaign_id, facility_id) do update set
+        gate_decision = excluded.gate_decision,
+        gate_confidence = excluded.gate_confidence,
+        gate_reasons = excluded.gate_reasons,
+        updated_at = now()
+      returning *
+    `,
+    [
+      campaignId,
+      facilityId,
+      candidate.gate_decision,
+      candidate.gate_confidence,
+      JSON.stringify(candidate.gate_reasons || [])
+    ]
+  );
+
+  return targetResult.rows[0];
+}
+
 export async function promoteResearchCandidate(candidateId: string, campaignId?: string, override = false) {
   if (!researchDb) throw new Error('Research database is not configured.');
   if (!operationalDb) throw new Error('Operational database is not configured.');
@@ -74,6 +133,21 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
   const allowed = ['NEW', 'NEEDS_REVIEW', 'SEEN_BEFORE'];
   if (!override && !allowed.includes(candidate.gate_decision)) {
     throw new Error(`Candidate is gated as ${candidate.gate_decision}; explicit override is required to promote it.`);
+  }
+
+  if (candidate.operational_facility_id) {
+    const existing = await operationalDb.query(
+      'select * from facilities where id = $1',
+      [candidate.operational_facility_id]
+    );
+    const facility = existing.rows[0];
+    if (!facility) throw new Error('Candidate points to an operational facility that no longer exists.');
+
+    const target = campaignId
+      ? await ensureCampaignTarget(campaignId, facility.id, candidate)
+      : null;
+
+    return { facility, target, reused: true };
   }
 
   const facilityResult = await operationalDb.query(
@@ -128,31 +202,9 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
     );
   }
 
-  let target = null;
-  if (campaignId) {
-    const targetResult = await operationalDb.query(
-      `
-        insert into campaign_targets
-          (campaign_id, facility_id, status, gate_decision, gate_confidence, gate_reasons)
-        values
-          ($1,$2,'RESEARCHING',$3,$4,$5::jsonb)
-        on conflict (campaign_id, facility_id) do update set
-          gate_decision = excluded.gate_decision,
-          gate_confidence = excluded.gate_confidence,
-          gate_reasons = excluded.gate_reasons,
-          updated_at = now()
-        returning *
-      `,
-      [
-        campaignId,
-        facility.id,
-        candidate.gate_decision,
-        candidate.gate_confidence,
-        JSON.stringify(candidate.gate_reasons || [])
-      ]
-    );
-    target = targetResult.rows[0];
-  }
+  const target = campaignId
+    ? await ensureCampaignTarget(campaignId, facility.id, candidate)
+    : null;
 
   await researchDb.query(
     `
@@ -165,5 +217,5 @@ export async function promoteResearchCandidate(candidateId: string, campaignId?:
     [candidateId, facility.id]
   );
 
-  return { facility, target };
+  return { facility, target, reused: false };
 }
