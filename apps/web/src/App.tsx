@@ -562,7 +562,7 @@ function App() {
                         <div className="candidate-main">
                           <div className="candidate-title-line">
                             <strong>{candidate.provider_name}</strong>
-                            <StatusPill status={candidate.gate_decision} />
+                            <StatusPill status={candidate.gate_decision || 'PENDING'} />
                           </div>
                           <span>{[candidate.city, candidate.country].filter(Boolean).join(', ') || 'Location not captured'}</span>
                           <div className="candidate-contact-line">
