@@ -542,6 +542,52 @@ input, select {
   font-size: 10.5px;
   background: #fff;
 }
+
+.capability-checklist {
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid #e6ebef;
+}
+.capability-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #748493;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.capability-checklist > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.capability-option {
+  min-height: 31px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid #dde6ed;
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+.capability-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #2e6d9d;
+}
+.capability-option span {
+  margin: 0;
+  color: #516474;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .candidate-list { display: grid; gap: 8px; }
 .candidate-row {
   display: grid;
