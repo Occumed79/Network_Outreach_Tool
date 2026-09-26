@@ -11,6 +11,7 @@ import { config } from './config.js';
 import { databaseHealth, operationalDb, researchDb } from './db.js';
 import { evaluateProvider } from './providerGate.js';
 import { addResearchCandidate, listResearchCandidates, promoteResearchCandidate } from './research.js';
+import { executeResearchRun, researchWorkerStatus } from './researchWorker.js';
 import { exportReadyQueueCsv, prepareCampaignTarget } from './outreach.js';
 
 const app = express();
@@ -26,7 +27,8 @@ app.get('/api/health', async (_req, res) => {
     adapters: {
       existingNetwork: Boolean(config.networkMapApiUrl),
       priorResearch: Boolean(config.internationalSearchApiUrl),
-      agreementGenerator: Boolean(config.agreementGeneratorUrl)
+      agreementGenerator: Boolean(config.agreementGeneratorUrl),
+      researchWorker: researchWorkerStatus()
     }
   });
 });
@@ -125,6 +127,27 @@ app.get('/api/research-runs', async (_req, res) => {
     `
   );
   res.json({ runs: result.rows });
+});
+
+app.post('/api/research-runs/:runId/execute', async (req, res) => {
+  const parsed = z.object({
+    maxQueries: z.number().int().min(1).max(8).optional(),
+    maxResultsPerQuery: z.number().int().min(1).max(20).optional()
+  }).safeParse(req.body ?? {});
+
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid research execution options', details: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const result = await executeResearchRun(req.params.runId, parsed.data);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Research execution failed'
+    });
+  }
 });
 
 app.get('/api/research-runs/:runId/candidates', async (req, res) => {
