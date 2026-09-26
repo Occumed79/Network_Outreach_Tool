@@ -1,10 +1,10 @@
 import { config } from './config.js';
 import { operationalDb } from './db.js';
 
-function replaceAll(template: string, values: Record<string, string>): string {
+function replaceTemplate(template: string, values: Record<string, string>): string {
   let result = template;
   for (const [key, value] of Object.entries(values)) {
-    result = result.replaceAll(`{{${key}}}`, value);
+    result = result.replaceTemplate(`{{${key}}}`, value);
   }
   return result;
 }
@@ -65,6 +65,12 @@ async function requestAgreement(payload: Record<string, unknown>) {
   }
 }
 
+export function targetReadiness(psaNeeded: boolean, agreementStatus?: string | null) {
+  if (!psaNeeded) return { status: 'READY', readyForExport: true } as const;
+  if (agreementStatus === 'GENERATED') return { status: 'READY', readyForExport: true } as const;
+  return { status: 'WAITING_ON_PSA', readyForExport: false } as const;
+}
+
 export async function prepareCampaignTarget(targetId: string) {
   if (!operationalDb) throw new Error('Operational database is not configured.');
 
@@ -73,6 +79,7 @@ export async function prepareCampaignTarget(targetId: string) {
       select
         ct.id as target_id,
         ct.status as target_status,
+        ct.psa_needed,
         f.id as facility_id,
         f.name as facility_name,
         f.address,
@@ -113,11 +120,11 @@ export async function prepareCampaignTarget(targetId: string) {
   }
 
   const greeting = row.contact_name ? String(row.contact_name) : 'Team';
-  const subject = replaceAll(String(row.subject_template), {
+  const subject = replaceTemplate(String(row.subject_template), {
     facility_name: String(row.facility_name),
     contact_or_team: greeting
   });
-  const body = replaceAll(String(row.body_template), {
+  const body = replaceTemplate(String(row.body_template), {
     facility_name: String(row.facility_name),
     contact_or_team: greeting
   });
@@ -169,7 +176,7 @@ export async function prepareCampaignTarget(targetId: string) {
   );
 
   let agreement = currentAgreement.rows[0] || null;
-  if (!agreement) {
+  if (!agreement && row.psa_needed) {
     const address = [
       row.address,
       row.city,
@@ -210,22 +217,24 @@ export async function prepareCampaignTarget(targetId: string) {
     agreement = inserted.rows[0];
   }
 
+  const readiness = targetReadiness(Boolean(row.psa_needed), agreement?.generation_status);
+
   await operationalDb.query(
     `
       update campaign_targets
-      set status = case when status in ('NOT_STARTED','RESEARCHING') then 'READY' else status end,
+      set status = $2,
           updated_at = now()
       where id = $1
     `,
-    [targetId]
+    [targetId, readiness.status]
   );
 
-  return { message, agreement };
+  return { message, agreement, ...readiness };
 }
 
 function csvEscape(value: unknown): string {
   const text = value == null ? '' : String(value);
-  if (/[",\n\r]/.test(text)) return `"${text.replaceAll('"', '""')}"`;
+  if (/[",\n\r]/.test(text)) return `"${text.replaceTemplate('"', '""')}"`;
   return text;
 }
 
@@ -262,6 +271,8 @@ export async function exportReadyQueueCsv(): Promise<string> {
         limit 1
       ) ad on true
       where om.status = 'READY'
+        and ct.status = 'READY'
+        and (ct.psa_needed = false or ad.generation_status = 'GENERATED')
       order by c.created_at, f.country, f.city, f.name
     `
   );
