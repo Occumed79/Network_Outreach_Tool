@@ -54,16 +54,30 @@ export function buildSearchQueries(
   )];
 }
 
+function normalizeLocation(value?: string | null): string {
+  return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function candidateIdentity(candidate: ProviderCandidate): string {
   const domain = extractDomain(candidate.website || candidate.email);
-  if (domain) return `domain:${domain}`;
+  const name = normalizeProviderName(candidate.name);
+  const country = normalizeLocation(candidate.country);
+  const city = normalizeLocation(candidate.city);
+  const address = normalizeLocation(candidate.address);
 
-  return [
-    'name',
-    normalizeProviderName(candidate.name),
-    candidate.city?.trim().toLowerCase() || '',
-    candidate.country.trim().toLowerCase()
-  ].join(':');
+  if (domain && address) {
+    return ['domain-address', domain, address, country].join(':');
+  }
+
+  if (domain) {
+    return ['domain-facility', domain, name, city, country].join(':');
+  }
+
+  if (address) {
+    return ['name-address', name, address, country].join(':');
+  }
+
+  return ['name-location', name, city, country].join(':');
 }
 
 function firstValue<T>(a: T | null | undefined, b: T | null | undefined): T | null | undefined {
@@ -144,31 +158,139 @@ async function storeSearchEvidence(runId: string, results: WebSearchResult[]) {
   }
 }
 
-async function candidateExists(runId: string, candidate: ProviderCandidate) {
+async function findExistingCandidateId(runId: string, candidate: ProviderCandidate): Promise<string | null> {
   if (!researchDb) throw new Error('Research database is not configured.');
 
   const domain = extractDomain(candidate.website || candidate.email);
   const normalizedName = normalizeProviderName(candidate.name);
+  const city = candidate.city || '';
+  const address = candidate.address || '';
 
   const result = await researchDb.query(
     `
       select id
       from research_candidates
       where research_run_id = $1
+        and lower(coalesce(country, '')) = lower($4)
         and (
-          ($2 <> '' and website_domain = $2)
+          (
+            $2 <> ''
+            and website_domain = $2
+            and (
+              ($6 <> '' and lower(coalesce(address, '')) = lower($6))
+              or (
+                normalized_name = $3
+                and ($5 = '' or lower(coalesce(city, '')) = lower($5))
+              )
+            )
+          )
           or (
             normalized_name = $3
-            and lower(coalesce(country, '')) = lower($4)
             and ($5 = '' or lower(coalesce(city, '')) = lower($5))
+            and ($6 = '' or lower(coalesce(address, '')) = lower($6))
           )
         )
       limit 1
     `,
-    [runId, domain, normalizedName, candidate.country, candidate.city || '']
+    [runId, domain, normalizedName, candidate.country, city, address]
   );
 
-  return Boolean(result.rows[0]);
+  return result.rows[0]?.id || null;
+}
+
+async function enrichExistingCandidate(
+  runId: string,
+  candidateId: string,
+  candidate: ProviderCandidate
+) {
+  if (!researchDb) throw new Error('Research database is not configured.');
+
+  await researchDb.query(
+    `
+      update research_candidates
+      set
+        address = coalesce(nullif($2, ''), address),
+        city = coalesce(nullif($3, ''), city),
+        phone = coalesce(nullif($4, ''), phone),
+        email = coalesce(nullif($5, ''), email),
+        website = coalesce(nullif($6, ''), website),
+        website_domain = coalesce(nullif($7, ''), website_domain),
+        raw_payload = raw_payload || $8::jsonb,
+        updated_at = now()
+      where id = $1
+    `,
+    [
+      candidateId,
+      candidate.address || '',
+      candidate.city || '',
+      candidate.phone || '',
+      candidate.email || '',
+      candidate.website || '',
+      extractDomain(candidate.website || candidate.email),
+      JSON.stringify(candidate)
+    ]
+  );
+
+  if (candidate.sourceUrl) {
+    await researchDb.query(
+      `
+        insert into evidence_sources
+          (research_run_id, candidate_id, evidence_type, source_url, source_domain, structured_data, confidence)
+        select
+          $1, $2, 'DISCOVERY_SOURCE', $3, $4, $5::jsonb, 0.8
+        where not exists (
+          select 1
+          from evidence_sources
+          where candidate_id = $2
+            and source_url = $3
+            and evidence_type = 'DISCOVERY_SOURCE'
+        )
+      `,
+      [
+        runId,
+        candidateId,
+        candidate.sourceUrl,
+        extractDomain(candidate.sourceUrl),
+        JSON.stringify({ providerName: candidate.name })
+      ]
+    );
+  }
+
+  if (candidate.email) {
+    await researchDb.query(
+      `
+        insert into contact_candidates
+          (candidate_id, email, email_verified, source_url, confidence, disposition)
+        select
+          $1, $2, false, $3, 0.6, 'PENDING'
+        where not exists (
+          select 1
+          from contact_candidates
+          where candidate_id = $1
+            and lower(coalesce(email, '')) = lower($2)
+        )
+      `,
+      [candidateId, candidate.email, candidate.sourceUrl || null]
+    );
+  }
+
+  for (const service of [...new Set(candidate.services || [])]) {
+    await researchDb.query(
+      `
+        insert into service_findings
+          (candidate_id, service_name, availability_status, source_url, confidence)
+        select
+          $1, $2, 'DOCUMENTED', $3, 0.8
+        where not exists (
+          select 1
+          from service_findings
+          where candidate_id = $1
+            and lower(service_name) = lower($2)
+        )
+      `,
+      [candidateId, service, candidate.sourceUrl || null]
+    );
+  }
 }
 
 async function recordRunEvent(
@@ -257,11 +379,14 @@ export async function executeResearchRun(
 
   const allResults: WebSearchResult[] = [];
   const sourceErrors: Array<{ source: string; query: string; error: string }> = [];
+  const totalSearchRequests = queries.length * sources.length;
+  let successfulSearchRequests = 0;
 
   for (const query of queries) {
     for (const source of sources) {
       try {
         const results = await source.search(query, maxResults);
+        successfulSearchRequests += 1;
         allResults.push(...results);
         await recordRunEvent(
           runId,
@@ -280,6 +405,31 @@ export async function executeResearchRun(
         );
       }
     }
+  }
+
+  if (totalSearchRequests > 0 && successfulSearchRequests === 0) {
+    const message = `All ${totalSearchRequests} configured search requests failed.`;
+    await researchDb.query(
+      `
+        update research_runs
+        set status = 'ERROR',
+            error_message = $2,
+            summary = $3::jsonb,
+            completed_at = now()
+        where id = $1
+      `,
+      [
+        runId,
+        message,
+        JSON.stringify({
+          queryCount: queries.length,
+          searchSources: sources.map((source) => source.id),
+          sourceErrors
+        })
+      ]
+    );
+    await recordRunEvent(runId, 'RESEARCH_ERROR', message, { sourceErrors });
+    throw new Error(message);
   }
 
   const uniqueSearchResults = [...new Map(
@@ -331,8 +481,15 @@ export async function executeResearchRun(
     );
 
     let added = 0;
+    let enriched = 0;
     for (const candidate of candidates) {
-      if (await candidateExists(runId, candidate)) continue;
+      const existingCandidateId = await findExistingCandidateId(runId, candidate);
+      if (existingCandidateId) {
+        await enrichExistingCandidate(runId, existingCandidateId, candidate);
+        enriched += 1;
+        continue;
+      }
+
       await addResearchCandidate(runId, candidate);
       added += 1;
     }
@@ -342,6 +499,7 @@ export async function executeResearchRun(
       searchResults: uniqueSearchResults.length,
       extractedCandidates: candidates.length,
       newCandidates: added,
+      enrichedCandidates: enriched,
       searchSources: sources.map((source) => source.id),
       aiProvider: ai.provider,
       aiModel: ai.model,
@@ -363,7 +521,7 @@ export async function executeResearchRun(
     await recordRunEvent(
       runId,
       'RESEARCH_COMPLETE',
-      `Research completed with ${added} new provider candidates.`,
+      `Research completed with ${added} new and ${enriched} enriched provider candidates.`,
       summary
     );
 
