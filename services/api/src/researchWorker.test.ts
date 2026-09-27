@@ -62,6 +62,36 @@ test('candidate dedupe merges services for the same website domain', () => {
   ]));
 });
 
+
+test('candidate dedupe keeps separate facilities that share a corporate domain', () => {
+  const input: ProviderCandidate[] = [
+    {
+      name: 'Example Health - Central',
+      country: 'Example Country',
+      city: 'Central City',
+      address: '1 Main Street',
+      website: 'https://example.test/central',
+      services: ['Capability Alpha']
+    },
+    {
+      name: 'Example Health - North',
+      country: 'Example Country',
+      city: 'North City',
+      address: '99 North Road',
+      website: 'https://example.test/north',
+      services: ['Capability Beta']
+    }
+  ];
+
+  const result = dedupeProviderCandidates(input);
+
+  assert.equal(result.length, 2);
+  assert.deepEqual(
+    result.map((candidate) => candidate.city).sort(),
+    ['Central City', 'North City']
+  );
+});
+
 test('JSON extraction parser accepts fenced model output', () => {
   const parsed = parseJsonObject('Here is the result:\n\`\`\`json\n{"providers":[{"name":"Example"}]}\n\`\`\`');
   assert.deepEqual(parsed, { providers: [{ name: 'Example' }] });
