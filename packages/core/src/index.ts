@@ -1,6 +1,5 @@
 export type OutreachStatus =
   | 'NOT_STARTED'
-  | 'RESEARCHING'
   | 'READY'
   | 'CONTACTED'
   | 'WAITING_ON_PRICING'
@@ -16,7 +15,6 @@ export type OutreachStatus =
 export type GateDecision =
   | 'NEW'
   | 'EXISTING_NETWORK'
-  | 'SEEN_BEFORE'
   | 'PREVIOUSLY_CONTACTED'
   | 'FOLLOW_UP_DUE'
   | 'ACTIVE_PROVIDER'
