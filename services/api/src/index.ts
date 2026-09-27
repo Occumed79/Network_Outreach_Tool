@@ -3,7 +3,6 @@ import cors from 'cors';
 import { z } from 'zod';
 import {
   PROVIDER_TYPE_PROFILES,
-  RESEARCH_PRESETS,
   normalizeProviderName,
   type ProviderCandidate
 } from '@network-outreach/core';
@@ -35,10 +34,6 @@ app.get('/api/health', async (_req, res) => {
 
 app.get('/api/provider-types', (_req, res) => {
   res.json({ providerTypes: PROVIDER_TYPE_PROFILES });
-});
-
-app.get('/api/research-presets', (_req, res) => {
-  res.json({ presets: RESEARCH_PRESETS });
 });
 
 const candidateSchema = z.object({
