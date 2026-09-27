@@ -14,10 +14,21 @@ if (!connectionString) {
 }
 
 const directory = path.join(repoRoot, 'db', 'operational');
+function sslOptions(value: string) {
+  try {
+    const host = new URL(value).hostname;
+    return host === 'localhost' || host === '127.0.0.1'
+      ? false
+      : { rejectUnauthorized: false };
+  } catch {
+    return { rejectUnauthorized: false };
+  }
+}
+
 const pool = new Pool({
   connectionString,
   max: 1,
-  ssl: { rejectUnauthorized: false }
+  ssl: sslOptions(connectionString)
 });
 
 try {
