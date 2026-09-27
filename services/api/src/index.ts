@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
   PROVIDER_TYPE_PROFILES,
@@ -481,6 +484,20 @@ app.post('/api/facilities', async (req, res) => {
 
   res.status(201).json({ facility: result.rows[0] });
 });
+
+if (process.env.NODE_ENV === 'production') {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webDist = path.resolve(here, '../../../apps/web/dist');
+
+  if (fs.existsSync(webDist)) {
+    app.use(express.static(webDist, { index: false }));
+    app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+      res.sendFile(path.join(webDist, 'index.html'));
+    });
+  } else {
+    console.warn(`[web] production web bundle not found at ${webDist}`);
+  }
+}
 
 app.listen(config.port, () => {
   console.log(`Network Outreach API listening on http://localhost:${config.port}`);
