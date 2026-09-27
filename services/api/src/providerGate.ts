@@ -41,27 +41,53 @@ async function findLocalMatch(candidate: ProviderCandidate): Promise<LocalMatch 
       from facilities f
       left join contacts c on c.facility_id = f.id and c.is_primary = true
       where
-        ($1 <> '' and f.website_domain = $1)
-        or ($2 <> '' and f.phone_normalized = $2)
-        or ($3 <> '' and lower(coalesce(c.email, '')) = $3)
-        or (
+        (
           f.normalized_name = $4
           and lower(coalesce(f.country, '')) = lower($5)
+          and ($6 = '' or lower(coalesce(f.city, '')) = lower($6))
+        )
+        or (
+          $1 <> ''
+          and f.website_domain = $1
+          and f.normalized_name = $4
+          and lower(coalesce(f.country, '')) = lower($5)
+          and ($6 = '' or lower(coalesce(f.city, '')) = lower($6))
+        )
+        or (
+          $2 <> ''
+          and f.phone_normalized = $2
+          and f.normalized_name = $4
+        )
+        or (
+          $3 <> ''
+          and lower(coalesce(c.email, '')) = $3
           and (
-            $6 = ''
-            or lower(coalesce(f.city, '')) = lower($6)
+            f.normalized_name = $4
+            or (
+              lower(coalesce(f.country, '')) = lower($5)
+              and $6 <> ''
+              and lower(coalesce(f.city, '')) = lower($6)
+            )
           )
+        )
+        or (
+          $7 <> ''
+          and lower(trim(coalesce(f.address, ''))) = lower(trim($7))
+          and lower(coalesce(f.country, '')) = lower($5)
         )
       order by
         case
-          when $1 <> '' and f.website_domain = $1 then 0
-          when $3 <> '' and lower(coalesce(c.email, '')) = $3 then 1
-          when $2 <> '' and f.phone_normalized = $2 then 2
-          else 3
+          when f.normalized_name = $4
+            and lower(coalesce(f.country, '')) = lower($5)
+            and ($6 = '' or lower(coalesce(f.city, '')) = lower($6)) then 0
+          when $7 <> '' and lower(trim(coalesce(f.address, ''))) = lower(trim($7)) then 1
+          when $2 <> '' and f.phone_normalized = $2 and f.normalized_name = $4 then 2
+          when $1 <> '' and f.website_domain = $1 and f.normalized_name = $4 then 3
+          else 4
         end
       limit 1
     `,
-    [domain, phone, email, normalizedName, candidate.country, candidate.city || '']
+    [domain, phone, email, normalizedName, candidate.country, candidate.city || '', candidate.address || '']
   );
 
   return result.rows[0] || null;
@@ -138,6 +164,21 @@ export async function evaluateProvider(candidate: ProviderCandidate): Promise<Ga
         ...(internationalSearch.label ? [`Match: ${internationalSearch.label}`] : [])
       ],
       matchedExternalSource: 'international-search'
+    };
+  }
+
+  const unavailableSources = [networkMap, internationalSearch]
+    .filter((check) => !check.available)
+    .map((check) => check.source);
+
+  if (unavailableSources.length > 0) {
+    return {
+      decision: 'NEEDS_REVIEW',
+      confidence: 0.5,
+      reasons: [
+        `Could not complete required exclusion checks: ${unavailableSources.join(', ')}.`,
+        'Provider is not classified as NEW until the exclusion sources are available.'
+      ]
     };
   }
 
