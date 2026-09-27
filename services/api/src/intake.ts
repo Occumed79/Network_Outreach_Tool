@@ -1,5 +1,6 @@
 import { parse } from 'csv-parse/sync';
 import {
+  PROVIDER_TYPE_PROFILES,
   extractDomain,
   normalizePhone,
   normalizeProviderName,
@@ -79,6 +80,20 @@ function normalizePriority(value: unknown): string {
     : 'MEDIUM';
 }
 
+function normalizeProviderType(value: unknown): string | null {
+  const raw = clean(value).toLowerCase();
+  if (!raw) return null;
+
+  const normalized = raw.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const exact = PROVIDER_TYPE_PROFILES.find((profile) =>
+    profile.id.toLowerCase() === normalized
+    || profile.label.toLowerCase() === raw
+    || profile.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') === normalized
+  );
+
+  return exact?.id || normalized;
+}
+
 function splitServices(value: unknown): string[] {
   if (Array.isArray(value)) {
     return [...new Set(value.map(clean).filter(Boolean))];
@@ -154,7 +169,7 @@ export function parseProviderCsv(
       throw new Error(`CSV row ${index + 2} is missing a country and the campaign has no default country.`);
     }
 
-    const providerType = optional(
+    const providerType = normalizeProviderType(
       pick(row, ['Provider Type', 'Facility Type', 'Type'])
       ?? defaults.providerType
     );
@@ -636,7 +651,7 @@ export async function ingestProviders(
   const campaign = await campaignDefaults(campaignId);
   const prepared = providers.map((provider) => ({
     ...provider,
-    providerType: provider.providerType || campaign.provider_type || null,
+    providerType: normalizeProviderType(provider.providerType || campaign.provider_type),
     country: clean(provider.country || campaign.country || ''),
     city: provider.city || campaign.city || null,
     priority: normalizePriority(provider.priority),
