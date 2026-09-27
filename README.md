@@ -1,103 +1,116 @@
 # Network Outreach Tool
 
-Occu-Med's provider-network development operating system.
+Occu-Med's high-volume provider outreach execution system.
 
-This application is being built from a blank repository around the full workflow proven during the Apollo outreach project:
+**Network Outreach starts after providers have already been identified.** It does not research for providers.
 
-**discover → verify → exclude/match → enrich contacts/services/pricing → prepare agreement + email → review → Outlook queue → follow-up → onboard**
+The product turns provider lists into:
+
+**intake → existing-network exclusion → campaign targets → individualized agreement + email preparation → Outlook queue → tracking/follow-up → completion**
+
+## System roles
+
+- **Network Map** — provider research/discovery. It supplies selected provider prospects to Outreach.
+- **International Search** — existing/current Occu-Med network. Outreach uses it as the exclusion list.
+- **Pricing Agreement Generator** — existing provider-agreement generation engine.
+- **Excel/Outlook** — local corporate sending bridge.
+- **Network Outreach Tool** — campaign-scale execution and tracking.
 
 ## What this repository owns
 
-- Natural-language provider research requests
-- Provider/entity normalization
-- Provider Gate and exclusion decisions
-- Operational provider/outreach records
-- Research/AI working records
-- Contact, service, pricing, and evidence intelligence
-- Outreach campaigns and targets
-- Email-template routing
-- Agreement-generation requests/references
-- Follow-up and communication history
-- Excel/Outlook queue integration
+- campaigns
+- CSV/manual/Network Map provider intake
+- batch dedupe
+- existing-network exclusion
+- provider/contact records required for outreach
+- campaign targets
+- provider-type email routing
+- agreement requests/references
+- READY queue
+- Outlook CSV export
+- communication/status tracking
+- follow-ups
+- pricing/PSA outcome state
 
-## What it does not replace
+It deliberately does **not** own:
+- provider discovery
+- web research
+- natural-language research runs
+- AI research workers
+- a separate research database
 
-- **Network Map** — provider-discovery/intelligence source for providers outside the current Occu-Med network
-- **International Search** — existing/current provider-network data used as the exclusion list
-- **Pricing Agreement Generator** — existing document-generation engine
-- **Outlook** — corporate email delivery via the local Excel/VBA bridge
-
-## Databases
-
-Two Neon databases are intentionally separated:
-
-- `DATABASE_URL` — operational outreach/provider data
-- `DATABASE_URL_2` — research/AI working data
-
-Connection strings belong in environment variables only. Never commit them.
-
-## Repository layout
+## Stack
 
 ```text
-apps/web/               React/Vite operating console
-services/api/           TypeScript API + Provider Gate
-packages/core/          Shared provider/outreach types and profiles
-db/operational/         Operational Neon migrations + seeds
-db/research/            Research Neon migrations
-docs/                   Architecture and build plan
+apps/web/               React/Vite outreach operations console
+services/api/           TypeScript API
+packages/core/          Shared provider/outreach types
+db/operational/         Operational Neon migrations
+integrations/            Excel/Outlook bridge
 ```
 
-## Current build
+## Database
 
-The foundation branch includes:
+Only `DATABASE_URL` is required by Network Outreach.
 
-- locked product instructions in `AGENTS.md`
-- two-database schema
-- provider/contact/service/pricing/evidence model
-- campaign/outreach/agreement model
-- provider-type routing profiles
-- approved provider-account email seed
-- Provider Gate API
-- Network Map discovery adapter and International Search existing-network exclusion adapter
-- research-run API
-- outreach queue API
-- initial premium-light web command center
+```bash
+DATABASE_URL=
+INTERNATIONAL_SEARCH_API_URL=
+AGREEMENT_GENERATOR_URL=
+PUBLIC_BASE_URL=
+```
 
-The application is intentionally geography- and provider-type-agnostic. Specific campaigns such as Apollo or a dental market search are validation workloads, not hard-coded product features.
+## Core API flow
+
+### Create campaign
+
+```
+POST /api/campaigns
+```
+
+### Import identified providers
+
+JSON / Network Map handoff:
+
+```
+POST /api/campaigns/:campaignId/providers
+```
+
+CSV:
+
+```
+POST /api/campaigns/:campaignId/import.csv
+```
+
+Every imported provider passes through:
+1. Network Outreach prior-history/dedupe check.
+2. International Search existing-network exclusion.
+3. Campaign target creation only when eligible.
+
+### Prepare outreach
+
+```
+POST /api/campaigns/:campaignId/prepare
+```
+
+### Export READY individualized messages
+
+```
+GET /api/outreach/export.csv?campaignId=:campaignId
+```
 
 ## Local development
 
-Requirements:
-- Node 22+
-- pnpm 10+
-- two Neon connection strings
+Requires Node 22+ and pnpm 10+.
 
 ```bash
 cp .env.example .env
 pnpm install
+pnpm --filter @network-outreach/api migrate
 pnpm dev
 ```
 
 Web: http://localhost:5173  
 API: http://localhost:8787
 
-## Database setup
-
-Apply the migrations to the appropriate database:
-
-Operational:
-```
-db/operational/001_foundation.sql
-db/operational/002_seed_profiles_and_email.sql
-```
-
-Research:
-```
-db/research/001_foundation.sql
-```
-
-The application should not auto-create production schema at request time. Migrations remain explicit and reviewable.
-
-## Product rules
-
-Read `AGENTS.md` before changing architecture or workflow. It contains the non-negotiable product behavior recovered from the Apollo project and the broader provider-outreach design.
+Read `AGENTS.md` before changing product architecture.
