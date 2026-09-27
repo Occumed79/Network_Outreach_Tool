@@ -10,7 +10,7 @@ This project is for provider/business information such as pricing, service capab
 
 ## Core workflow
 
-A natural-language request such as "Find dental providers in South Africa" should ultimately support:
+A natural-language request such as "Find [provider type] providers in [location] with [required services]" should ultimately support:
 
 1. Discover direct provider entities.
 2. Resolve organization, facility, location, operator/contracting entity, and relationship type.
