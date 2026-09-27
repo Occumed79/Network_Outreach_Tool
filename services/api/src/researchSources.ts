@@ -1,3 +1,4 @@
+import type { ProviderCandidate, ProviderTypeProfile } from '@network-outreach/core';
 import { config } from './config.js';
 
 export interface WebSearchResult {
@@ -121,6 +122,110 @@ const exa: SearchSource = {
   }
 };
 
+
+export interface StructuredProviderResult {
+  candidate: ProviderCandidate;
+  evidenceText?: string | null;
+  exactPrice?: number | null;
+  currency?: string | null;
+  priceType?: string | null;
+  sourceType?: string | null;
+  confidence?: number | null;
+  raw: Record<string, unknown>;
+}
+
+interface StructuredDiscoveryContext {
+  prompt: string;
+  providerType?: string | null;
+  country?: string | null;
+  city?: string | null;
+}
+
+function internationalProviderType(providerType?: string | null): string | undefined {
+  const mapping: Record<string, string> = {
+    occupational_health: 'occupational_health',
+    hospital: 'hospital',
+    laboratory: 'lab',
+    dental: 'dental',
+    imaging: 'imaging_center'
+  };
+  return providerType ? mapping[providerType] : undefined;
+}
+
+export async function discoverViaInternationalSearch(
+  context: StructuredDiscoveryContext,
+  profile: ProviderTypeProfile
+): Promise<StructuredProviderResult[]> {
+  if (!config.internationalSearchApiUrl) return [];
+
+  const request = timeoutSignal(45000);
+  try {
+    const response = await fetch(
+      `${config.internationalSearchApiUrl.replace(/\/$/, '')}/api/outside-network/search`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          query: context.prompt || profile.label,
+          providerType: internationalProviderType(context.providerType),
+          country: context.country || undefined,
+          city: context.city || undefined,
+          radiusMiles: 50,
+          services: profile.requiredCapabilities
+        }),
+        signal: request.signal
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `International Search discovery failed with HTTP ${response.status}`
+      );
+    }
+
+    const body = await response.json() as {
+      candidates?: unknown[];
+    };
+
+    return (body.candidates || [])
+      .map((item) => item as Record<string, unknown>)
+      .filter((item) => asText(item.providerName) && asText(item.sourceUrl))
+      .map((item) => {
+        const exactPrice = asNumber(item.exactPrice);
+        const confidence = asNumber(item.confidenceScore);
+        return {
+          candidate: {
+            name: asText(item.providerName),
+            country: asText(item.country) || context.country || '',
+            city: asText(item.city) || null,
+            address: null,
+            website: asText(item.website) || null,
+            phone: asText(item.phone) || null,
+            email: null,
+            providerType: context.providerType || null,
+            sourceUrl: asText(item.sourceUrl),
+            services: []
+          },
+          evidenceText: asText(item.evidenceText) || null,
+          exactPrice: exactPrice && exactPrice > 0 ? exactPrice : null,
+          currency: asText(item.currency) || null,
+          priceType: asText(item.priceType) || null,
+          sourceType: asText(item.sourceType) || 'international-search',
+          confidence,
+          raw: item
+        };
+      });
+  } finally {
+    request.done();
+  }
+}
+
+export function structuredResearchStatus() {
+  return {
+    internationalSearch: Boolean(config.internationalSearchApiUrl)
+  };
+}
+
 export function configuredSearchSources(): SearchSource[] {
   const available = new Map<string, SearchSource>();
   if (config.tavilyApiKey) available.set(tavily.id, tavily);
@@ -138,6 +243,7 @@ export function configuredSearchSources(): SearchSource[] {
 export function researchSearchStatus() {
   return {
     configured: configuredSearchSources().map((source) => source.id),
-    requested: config.researchSearchProviders
+    requested: config.researchSearchProviders,
+    structured: structuredResearchStatus()
   };
 }

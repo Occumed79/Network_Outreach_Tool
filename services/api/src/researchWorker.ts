@@ -9,7 +9,10 @@ import { researchDb } from './db.js';
 import { addResearchCandidate } from './research.js';
 import {
   configuredSearchSources,
+  discoverViaInternationalSearch,
   researchSearchStatus,
+  structuredResearchStatus,
+  type StructuredProviderResult,
   type WebSearchResult
 } from './researchSources.js';
 import {
@@ -293,6 +296,89 @@ async function enrichExistingCandidate(
   }
 }
 
+async function storeStructuredDiscovery(
+  runId: string,
+  candidateId: string,
+  result: StructuredProviderResult
+) {
+  if (!researchDb) throw new Error('Research database is not configured.');
+
+  await researchDb.query(
+    `
+      insert into evidence_sources
+        (
+          research_run_id,
+          candidate_id,
+          evidence_type,
+          source_url,
+          source_domain,
+          excerpt,
+          structured_data,
+          confidence
+        )
+      values
+        ($1, $2, 'INTERNATIONAL_SEARCH_DISCOVERY', $3, $4, $5, $6::jsonb, $7)
+    `,
+    [
+      runId,
+      candidateId,
+      result.candidate.sourceUrl || null,
+      extractDomain(result.candidate.sourceUrl),
+      result.evidenceText || null,
+      JSON.stringify(result.raw),
+      result.confidence ?? 0.75
+    ]
+  );
+
+  if (result.exactPrice && result.currency) {
+    const serviceName =
+      String(result.raw.normalizedService || result.raw.serviceQuery || '').trim()
+      || 'Provider-reported service price';
+
+    await researchDb.query(
+      `
+        insert into pricing_findings
+          (
+            candidate_id,
+            service_name,
+            amount,
+            currency,
+            pricing_type,
+            source_url,
+            excerpt,
+            confidence
+          )
+        values
+          ($1, $2, $3, $4, $5, $6, $7, $8)
+      `,
+      [
+        candidateId,
+        serviceName,
+        result.exactPrice,
+        result.currency,
+        result.priceType || 'DISCOVERED',
+        result.candidate.sourceUrl || null,
+        result.evidenceText || null,
+        result.confidence ?? 0.75
+      ]
+    );
+  }
+}
+
+async function ingestCandidate(
+  runId: string,
+  candidate: ProviderCandidate
+): Promise<{ candidateId: string; added: boolean }> {
+  const existingCandidateId = await findExistingCandidateId(runId, candidate);
+  if (existingCandidateId) {
+    await enrichExistingCandidate(runId, existingCandidateId, candidate);
+    return { candidateId: existingCandidateId, added: false };
+  }
+
+  const created = await addResearchCandidate(runId, candidate);
+  return { candidateId: created.candidate.id, added: true };
+}
+
 async function recordRunEvent(
   runId: string,
   eventType: string,
@@ -314,6 +400,7 @@ async function recordRunEvent(
 export function researchWorkerStatus() {
   return {
     search: researchSearchStatus(),
+    structured: structuredResearchStatus(),
     ai: researchAiStatus()
   };
 }
@@ -337,14 +424,15 @@ export async function executeResearchRun(
   }
 
   const sources = configuredSearchSources();
+  const structuredStatus = structuredResearchStatus();
   const ai = researchAiStatus();
 
-  if (sources.length === 0) {
+  if (sources.length === 0 && !structuredStatus.internationalSearch) {
     await researchDb.query(
       `
         update research_runs
         set status = 'WAITING_FOR_SEARCH',
-            error_message = 'No web search provider is configured.'
+            error_message = 'No provider-discovery source is configured.'
         where id = $1
       `,
       [runId]
@@ -382,6 +470,42 @@ export async function executeResearchRun(
   const totalSearchRequests = queries.length * sources.length;
   let successfulSearchRequests = 0;
 
+  let structuredResults: StructuredProviderResult[] = [];
+  let structuredDiscoverySucceeded = false;
+  if (structuredStatus.internationalSearch) {
+    try {
+      structuredResults = await discoverViaInternationalSearch(
+        {
+          prompt: run.prompt,
+          providerType: run.provider_type,
+          country: run.country,
+          city: run.city
+        },
+        profile
+      );
+      structuredDiscoverySucceeded = true;
+      await recordRunEvent(
+        runId,
+        'STRUCTURED_DISCOVERY_COMPLETE',
+        `International Search returned ${structuredResults.length} outside-network provider candidates.`,
+        { source: 'international-search', resultCount: structuredResults.length }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'International Search discovery failed';
+      sourceErrors.push({
+        source: 'international-search',
+        query: run.prompt,
+        error: message
+      });
+      await recordRunEvent(
+        runId,
+        'STRUCTURED_DISCOVERY_ERROR',
+        message,
+        { source: 'international-search' }
+      );
+    }
+  }
+
   for (const query of queries) {
     for (const source of sources) {
       try {
@@ -407,7 +531,7 @@ export async function executeResearchRun(
     }
   }
 
-  if (totalSearchRequests > 0 && successfulSearchRequests === 0) {
+  if (!structuredDiscoverySucceeded && successfulSearchRequests === 0) {
     const message = `All ${totalSearchRequests} configured search requests failed.`;
     await researchDb.query(
       `
@@ -423,7 +547,10 @@ export async function executeResearchRun(
         message,
         JSON.stringify({
           queryCount: queries.length,
-          searchSources: sources.map((source) => source.id),
+          searchSources: [
+        ...(structuredStatus.internationalSearch ? ['international-search'] : []),
+        ...sources.map((source) => source.id)
+      ],
           sourceErrors
         })
       ]
@@ -440,38 +567,68 @@ export async function executeResearchRun(
 
   await storeSearchEvidence(runId, uniqueSearchResults);
 
+  let structuredAdded = 0;
+  let structuredEnriched = 0;
+  for (const structured of structuredResults) {
+    const ingested = await ingestCandidate(runId, {
+      ...structured.candidate,
+      providerType: run.provider_type
+    });
+    await storeStructuredDiscovery(runId, ingested.candidateId, structured);
+    if (ingested.added) structuredAdded += 1;
+    else structuredEnriched += 1;
+  }
+
   if (!ai.configured) {
+    const canCompleteWithoutAi = structuredDiscoverySucceeded;
+    const status = canCompleteWithoutAi ? 'COMPLETE' : 'WAITING_FOR_AI';
     const summary = {
+      structuredCandidates: structuredResults.length,
+      structuredAdded,
+      structuredEnriched,
       searchResults: uniqueSearchResults.length,
       searchSources: sources.map((source) => source.id),
+      webEvidenceAwaitingAi: uniqueSearchResults.length > 0,
       sourceErrors
     };
     await researchDb.query(
       `
         update research_runs
-        set status = 'WAITING_FOR_AI',
-            summary = $2::jsonb,
-            error_message = 'Search evidence collected, but no research AI endpoint is configured.'
+        set status = $2,
+            summary = $3::jsonb,
+            error_message = $4,
+            completed_at = case when $2 = 'COMPLETE' then now() else completed_at end
         where id = $1
       `,
-      [runId, JSON.stringify(summary)]
+      [
+        runId,
+        status,
+        JSON.stringify(summary),
+        canCompleteWithoutAi
+          ? null
+          : 'Search evidence collected, but no research AI endpoint is configured.'
+      ]
     );
     return {
-      status: 'WAITING_FOR_AI',
+      status,
       searchResults: uniqueSearchResults.length,
-      extractedCandidates: 0,
-      newCandidates: 0,
+      structuredCandidates: structuredResults.length,
+      extractedCandidates: structuredResults.length,
+      newCandidates: structuredAdded,
+      enrichedCandidates: structuredEnriched,
       sourceErrors
     };
   }
 
   try {
-    const extracted = await extractProvidersFromSearch({
-      prompt: run.prompt,
-      providerType: run.provider_type,
-      country: run.country,
-      city: run.city
-    }, profile, uniqueSearchResults);
+    const extracted = uniqueSearchResults.length > 0
+      ? await extractProvidersFromSearch({
+          prompt: run.prompt,
+          providerType: run.provider_type,
+          country: run.country,
+          city: run.city
+        }, profile, uniqueSearchResults)
+      : [];
 
     const candidates = dedupeProviderCandidates(
       extracted.map((candidate) => ({
@@ -480,24 +637,20 @@ export async function executeResearchRun(
       }))
     );
 
-    let added = 0;
-    let enriched = 0;
+    let added = structuredAdded;
+    let enriched = structuredEnriched;
     for (const candidate of candidates) {
-      const existingCandidateId = await findExistingCandidateId(runId, candidate);
-      if (existingCandidateId) {
-        await enrichExistingCandidate(runId, existingCandidateId, candidate);
-        enriched += 1;
-        continue;
-      }
-
-      await addResearchCandidate(runId, candidate);
-      added += 1;
+      const ingested = await ingestCandidate(runId, candidate);
+      if (ingested.added) added += 1;
+      else enriched += 1;
     }
 
     const summary = {
       queryCount: queries.length,
       searchResults: uniqueSearchResults.length,
-      extractedCandidates: candidates.length,
+      structuredCandidates: structuredResults.length,
+      aiExtractedCandidates: candidates.length,
+      extractedCandidates: structuredResults.length + candidates.length,
       newCandidates: added,
       enrichedCandidates: enriched,
       searchSources: sources.map((source) => source.id),
