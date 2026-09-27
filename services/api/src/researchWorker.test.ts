@@ -43,7 +43,7 @@ test('candidate dedupe merges services for the same website domain', () => {
       services: ['Bitewing radiographs']
     },
     {
-      name: 'Example Dental',
+      name: 'Example Dental Centre',
       country: 'Example Country',
       city: 'Example City',
       website: 'https://www.example.test/contact',
