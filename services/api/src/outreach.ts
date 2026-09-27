@@ -16,7 +16,9 @@ async function requestAgreement(payload: Record<string, unknown>) {
       externalId: null,
       fileName: null,
       storageUrl: null,
-      sha256: null
+      sha256: null,
+      contentType: null,
+      fileBytes: null
     };
   }
 
@@ -40,7 +42,9 @@ async function requestAgreement(payload: Record<string, unknown>) {
         externalId: null,
         fileName: null,
         storageUrl: null,
-        sha256: null
+        sha256: null,
+        contentType: null,
+        fileBytes: null
       };
     }
 
@@ -50,7 +54,11 @@ async function requestAgreement(payload: Record<string, unknown>) {
       externalId: typeof data.id === 'string' ? data.id : null,
       fileName: typeof data.fileName === 'string' ? data.fileName : null,
       storageUrl: typeof data.storageUrl === 'string' ? data.storageUrl : null,
-      sha256: typeof data.sha256 === 'string' ? data.sha256 : null
+      sha256: typeof data.sha256 === 'string' ? data.sha256 : null,
+      contentType: typeof data.contentType === 'string' ? data.contentType : null,
+      fileBytes: typeof data.fileBase64 === 'string'
+        ? Buffer.from(data.fileBase64, 'base64')
+        : null
     };
   } catch {
     return {
@@ -58,7 +66,9 @@ async function requestAgreement(payload: Record<string, unknown>) {
       externalId: null,
       fileName: null,
       storageUrl: null,
-      sha256: null
+      sha256: null,
+      contentType: null,
+      fileBytes: null
     };
   } finally {
     clearTimeout(timeout);
@@ -207,9 +217,25 @@ export async function prepareCampaignTarget(targetId: string) {
     const inserted = await operationalDb.query(
       `
         insert into agreement_documents
-          (facility_id, campaign_target_id, template_key, generator_external_id, file_name, storage_url, sha256, generation_status, generated_at)
+          (
+            facility_id,
+            campaign_target_id,
+            template_key,
+            generator_external_id,
+            file_name,
+            storage_url,
+            sha256,
+            generation_status,
+            generated_at,
+            file_bytes,
+            content_type
+          )
         values
-          ($1, $2, $3, $4, $5, $6, $7, $8, case when $8 = 'GENERATED' then now() else null end)
+          (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            case when $8 = 'GENERATED' then now() else null end,
+            $9, $10
+          )
         returning *
       `,
       [
@@ -220,10 +246,32 @@ export async function prepareCampaignTarget(targetId: string) {
         generated.fileName,
         generated.storageUrl,
         generated.sha256,
-        generated.status
+        generated.status,
+        generated.fileBytes,
+        generated.contentType
       ]
     );
     agreement = inserted.rows[0];
+
+    if (
+      agreement?.id
+      && agreement.generation_status === 'GENERATED'
+      && agreement.file_bytes
+      && config.publicBaseUrl
+    ) {
+      const downloadUrl =
+        `${config.publicBaseUrl.replace(/\/$/, '')}/api/agreements/${agreement.id}/download`;
+      const updated = await operationalDb.query(
+        `
+          update agreement_documents
+          set storage_url = $2
+          where id = $1
+          returning *
+        `,
+        [agreement.id, downloadUrl]
+      );
+      agreement = updated.rows[0];
+    }
   }
 
   const readiness = targetReadiness(Boolean(row.psa_needed), agreement?.generation_status);
