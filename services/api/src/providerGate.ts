@@ -74,6 +74,7 @@ async function findLocalMatch(candidate: ProviderCandidate): Promise<LocalMatch 
           $7 <> ''
           and lower(trim(coalesce(f.address, ''))) = lower(trim($7))
           and lower(coalesce(f.country, '')) = lower($5)
+          and f.normalized_name = $4
         )
       order by
         case
@@ -167,6 +168,19 @@ export async function evaluateProvider(candidate: ProviderCandidate): Promise<Ga
     };
   }
 
+  if (local) {
+    return {
+      decision: 'DUPLICATE',
+      confidence: 0.95,
+      reasons: [
+        ...reasons,
+        'Matched an existing operational facility record; external checks cannot create a second facility.'
+      ],
+      matchedFacilityId: local.facility_id,
+      matchedExternalSource: 'outreach'
+    };
+  }
+
   const unavailableSources = [networkMap, internationalSearch]
     .filter((check) => !check.available)
     .map((check) => check.source);
@@ -179,14 +193,6 @@ export async function evaluateProvider(candidate: ProviderCandidate): Promise<Ga
         `Could not complete required exclusion checks: ${unavailableSources.join(', ')}.`,
         'Provider is not classified as NEW until the exclusion sources are available.'
       ]
-    };
-  }
-
-  if (local) {
-    return {
-      decision: 'DUPLICATE',
-      confidence: 0.9,
-      reasons
     };
   }
 
