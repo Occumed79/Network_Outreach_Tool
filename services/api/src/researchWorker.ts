@@ -9,7 +9,7 @@ import { researchDb } from './db.js';
 import { addResearchCandidate } from './research.js';
 import {
   configuredSearchSources,
-  discoverViaInternationalSearch,
+  discoverViaNetworkMap,
   researchSearchStatus,
   structuredResearchStatus,
   type StructuredProviderResult,
@@ -317,7 +317,7 @@ async function storeStructuredDiscovery(
           confidence
         )
       values
-        ($1, $2, 'INTERNATIONAL_SEARCH_DISCOVERY', $3, $4, $5, $6::jsonb, $7)
+        ($1, $2, 'NETWORK_MAP_DISCOVERY', $3, $4, $5, $6::jsonb, $7)
     `,
     [
       runId,
@@ -330,39 +330,7 @@ async function storeStructuredDiscovery(
     ]
   );
 
-  if (result.exactPrice && result.currency) {
-    const serviceName =
-      String(result.raw.normalizedService || result.raw.serviceQuery || '').trim()
-      || 'Provider-reported service price';
 
-    await researchDb.query(
-      `
-        insert into pricing_findings
-          (
-            candidate_id,
-            service_name,
-            amount,
-            currency,
-            pricing_type,
-            source_url,
-            excerpt,
-            confidence
-          )
-        values
-          ($1, $2, $3, $4, $5, $6, $7, $8)
-      `,
-      [
-        candidateId,
-        serviceName,
-        result.exactPrice,
-        result.currency,
-        result.priceType || 'DISCOVERED',
-        result.candidate.sourceUrl || null,
-        result.evidenceText || null,
-        result.confidence ?? 0.75
-      ]
-    );
-  }
 }
 
 async function ingestCandidate(
@@ -427,7 +395,7 @@ export async function executeResearchRun(
   const structuredStatus = structuredResearchStatus();
   const ai = researchAiStatus();
 
-  if (sources.length === 0 && !structuredStatus.internationalSearch) {
+  if (sources.length === 0 && !structuredStatus.networkMap) {
     await researchDb.query(
       `
         update research_runs
@@ -472,9 +440,9 @@ export async function executeResearchRun(
 
   let structuredResults: StructuredProviderResult[] = [];
   let structuredDiscoverySucceeded = false;
-  if (structuredStatus.internationalSearch) {
+  if (structuredStatus.networkMap) {
     try {
-      structuredResults = await discoverViaInternationalSearch(
+      structuredResults = await discoverViaNetworkMap(
         {
           prompt: run.prompt,
           providerType: run.provider_type,
@@ -487,13 +455,13 @@ export async function executeResearchRun(
       await recordRunEvent(
         runId,
         'STRUCTURED_DISCOVERY_COMPLETE',
-        `International Search returned ${structuredResults.length} outside-network provider candidates.`,
-        { source: 'international-search', resultCount: structuredResults.length }
+        `Network Map returned ${structuredResults.length} outside-network provider candidates.`,
+        { source: 'network-map', resultCount: structuredResults.length }
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'International Search discovery failed';
+      const message = error instanceof Error ? error.message : 'Network Map discovery failed';
       sourceErrors.push({
-        source: 'international-search',
+        source: 'network-map',
         query: run.prompt,
         error: message
       });
@@ -501,7 +469,7 @@ export async function executeResearchRun(
         runId,
         'STRUCTURED_DISCOVERY_ERROR',
         message,
-        { source: 'international-search' }
+        { source: 'network-map' }
       );
     }
   }
@@ -548,7 +516,7 @@ export async function executeResearchRun(
         JSON.stringify({
           queryCount: queries.length,
           searchSources: [
-        ...(structuredStatus.internationalSearch ? ['international-search'] : []),
+        ...(structuredStatus.networkMap ? ['network-map'] : []),
         ...sources.map((source) => source.id)
       ],
           sourceErrors

@@ -15,8 +15,8 @@ A natural-language request such as "Find [provider type] providers in [location]
 1. Discover direct provider entities.
 2. Resolve organization, facility, location, operator/contracting entity, and relationship type.
 3. Research documented services, pricing, named decision-makers, direct emails, phones, and source evidence.
-4. Check Network Map to determine whether the provider is already known/in-network.
-5. Check International Search / prior research history to determine whether the provider was already discovered or investigated.
+4. Use Network Map as a provider-discovery/intelligence source for providers that are not in the current Occu-Med network.
+5. Check International Search's existing-provider/network data as the exclusion list before treating a discovered provider as new.
 6. Check this application's outreach history to determine whether the provider was already contacted, declined, bounced, or is due for follow-up.
 7. Suppress, merge, resume, enrich, or continue based on those findings.
 8. Route qualified providers to the correct provider-type email template and existing Pricing Agreement Generator template.
@@ -27,8 +27,8 @@ A natural-language request such as "Find [provider type] providers in [location]
 ## Existing-system boundaries
 
 - This repository starts from scratch. Do not copy old application code wholesale into it.
-- Network Map remains the canonical source for the existing Occu-Med provider universe and is an exclusion/enrichment source.
-- International Search is a seen-before / discovery-history source and can also contribute external-provider research.
+- Network Map is a provider-discovery/intelligence source for providers outside the current Occu-Med network. It is not the existing-network exclusion list.
+- International Search contains the existing/current provider network data used as the exclusion list. It is not the provider-discovery source for this application.
 - Pricing_Agreement_Generator remains the agreement-generation engine. Do not build a competing document generator here.
 - Excel/Outlook is the local corporate-email execution bridge. The cloud app prepares the queue; Outlook performs the actual sending unless the user explicitly changes this architecture.
 - Integrate through adapters/APIs so those systems remain independently maintainable.
@@ -45,6 +45,8 @@ Never match providers by name alone. Provider identity may use:
 - parent organization
 - aliases/previous names
 - source-system IDs
+
+Provider Gate exclusion order is: this app's outreach history -> International Search existing-network exclusion -> NEW/NEEDS_REVIEW. Network Map discovery happens before the gate and must never be treated as proof that a provider is already in-network.
 
 Possible gate outcomes include:
 - NEW

@@ -12,7 +12,8 @@ Natural-language request
         v
 Research run
         |
-        +--> provider discovery
+        +--> Network Map provider discovery
+        +--> supplemental web/AI discovery
         +--> contact research
         +--> service research
         +--> pricing research
@@ -22,8 +23,8 @@ Research run
 Provider Gate
         |
         +--> this app's operational provider/outreach history
-        +--> Network Map exclusion/enrichment adapter
-        +--> International Search seen-before adapter
+        +--> International Search existing-provider exclusion
+        +--> this app's prior outreach / suppression history
         |
         v
 Qualified target
@@ -81,37 +82,29 @@ Only reviewed/qualified records are promoted into the operational database.
 
 ### Network Map
 
-Purpose: answer "Do we already know/have this provider?" and optionally enrich a match.
+Purpose: provider discovery/intelligence for facilities that are not in the current Occu-Med network.
 
-Initial adapter contract:
+Current read contract:
 
 ```
-POST {NETWORK_MAP_API_URL}/api/outreach-match
+GET {NETWORK_MAP_API_URL}/api/provider-explorer
 ```
 
-Input: provider candidate identity fields.
-
-Expected output:
-```json
-{
-  "found": true,
-  "recordId": "source-system-id",
-  "label": "Matched provider name",
-  "confidence": 0.98
-}
-```
+Network Outreach consumes stored/candidate provider records as discovery leads. Saved/current-network records are excluded from discovery calls. Every discovered provider still passes through the Provider Gate before outreach.
 
 ### International Search
 
-Purpose: answer "Have we already discovered/investigated this provider?" and reuse prior research.
+Purpose: authoritative existing-provider/network exclusion.
 
-Initial adapter contract:
+Current read contract:
 
 ```
-POST {INTERNATIONAL_SEARCH_API_URL}/api/outreach-match
+GET {INTERNATIONAL_SEARCH_API_URL}/api/network/search
 ```
 
-Same minimal output shape as Network Map.
+Network Outreach queries International Search using the candidate's name and geography. A confident facility-level match means the provider is already in the Occu-Med network and should not enter new-provider outreach.
+
+International Search is not used as Network Outreach's provider-discovery engine.
 
 ### Pricing Agreement Generator
 
@@ -156,9 +149,10 @@ The gate must operate in this order:
 
 1. This app's operational records and prior outreach.
 2. Explicit suppression/exclusion rules.
-3. Network Map.
-4. International Search.
-5. Fuzzy/ambiguous identity review if the signals disagree.
+3. International Search existing-provider/network exclusion.
+4. Fuzzy/ambiguous identity review if the exclusion check is incomplete or ambiguous.
+
+Network Map is upstream discovery, not an exclusion step.
 
 The gate returns a decision, confidence, reasons, and matched source.
 

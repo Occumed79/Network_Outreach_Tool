@@ -1,5 +1,4 @@
 import {
-  extractDomain,
   normalizePhone,
   normalizeProviderName,
   type ProviderCandidate
@@ -10,58 +9,61 @@ export interface ExternalMatch {
   found: boolean;
   available: boolean;
   configured: boolean;
-  source: 'network-map' | 'international-search';
+  source: 'international-search';
   recordId?: string;
   label?: string;
   confidence?: number;
   details?: Record<string, unknown>;
 }
 
-interface NetworkMapProvider {
+export interface ExistingNetworkProvider {
   id?: string;
-  name?: string;
+  externalId?: number | null;
+  providerName?: string | null;
+  organizationName?: string | null;
+  siteName?: string | null;
   address?: string | null;
   city?: string | null;
   country?: string | null;
   phone?: string | null;
-  website?: string | null;
-  source?: string | null;
-  source_kind?: string | null;
-  status?: string | null;
+  networkStatus?: string | null;
 }
 
 function normalizedText(value?: string | null): string {
   return (value || '')
     .toLowerCase()
     .normalize('NFKD')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function sameGeo(a?: string | null, b?: string | null): boolean {
-  const left = normalizedText(a);
-  const right = normalizedText(b);
-  return Boolean(left && right && left === right);
+function nameVariants(provider: ExistingNetworkProvider): string[] {
+  return [
+    provider.providerName,
+    provider.organizationName,
+    provider.siteName
+  ]
+    .map((value) => normalizeProviderName(value || ''))
+    .filter(Boolean);
 }
 
-export function scoreNetworkMapMatch(
+export function scoreExistingNetworkMatch(
   candidate: ProviderCandidate,
-  provider: NetworkMapProvider
+  provider: ExistingNetworkProvider
 ): number {
   const candidateName = normalizeProviderName(candidate.name);
-  const providerName = normalizeProviderName(provider.name || '');
-  const nameExact = Boolean(candidateName && providerName && candidateName === providerName);
-  const nameClose = Boolean(
-    candidateName
-      && providerName
-      && Math.min(candidateName.length, providerName.length) >= 8
-      && (candidateName.includes(providerName) || providerName.includes(candidateName))
+  const providerNames = nameVariants(provider);
+  const nameExact = Boolean(
+    candidateName && providerNames.some((name) => name === candidateName)
   );
-
-  const candidateDomain = extractDomain(candidate.website || candidate.email);
-  const providerDomain = extractDomain(provider.website);
-  const domainExact = Boolean(candidateDomain && providerDomain && candidateDomain === providerDomain);
+  const nameClose = Boolean(
+    candidateName && providerNames.some((name) => {
+      const shorter = candidateName.length <= name.length ? candidateName : name;
+      const longer = candidateName.length > name.length ? candidateName : name;
+      return shorter.length >= 8 && longer.includes(shorter);
+    })
+  );
 
   const candidatePhone = normalizePhone(candidate.phone).replace(/\D/g, '');
   const providerPhone = normalizePhone(provider.phone).replace(/\D/g, '');
@@ -76,17 +78,22 @@ export function scoreNetworkMapMatch(
       && provider.address
       && normalizedText(candidate.address) === normalizedText(provider.address)
   );
-  const cityExact = sameGeo(candidate.city, provider.city);
-  const countryExact = sameGeo(candidate.country, provider.country);
+  const cityExact = Boolean(
+    candidate.city
+      && provider.city
+      && normalizedText(candidate.city) === normalizedText(provider.city)
+  );
+  const countryExact = Boolean(
+    candidate.country
+      && provider.country
+      && normalizedText(candidate.country) === normalizedText(provider.country)
+  );
 
   if (nameExact && addressExact) return 1;
   if (nameExact && phoneExact) return 0.99;
-  if (domainExact && addressExact) return 0.99;
-  if (domainExact && nameExact && cityExact) return 0.98;
-  if (nameExact && cityExact && countryExact) return 0.96;
-  if (phoneExact && cityExact && countryExact) return 0.95;
-  if (domainExact && nameClose && cityExact && countryExact) return 0.94;
-  if (nameClose && addressExact) return 0.94;
+  if (nameExact && cityExact && countryExact) return 0.97;
+  if (nameClose && addressExact) return 0.96;
+  if (nameClose && phoneExact && countryExact) return 0.95;
 
   return 0;
 }
@@ -106,74 +113,59 @@ async function getJson<T>(url: string): Promise<T | null> {
   }
 }
 
-async function postJson<T>(url: string, body: unknown): Promise<T | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as T;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-export async function checkNetworkMap(candidate: ProviderCandidate): Promise<ExternalMatch> {
-  if (!config.networkMapApiUrl) {
-    return { found: false, available: false, configured: false, source: 'network-map' };
+export async function checkInternationalSearch(
+  candidate: ProviderCandidate
+): Promise<ExternalMatch> {
+  if (!config.internationalSearchApiUrl) {
+    return {
+      found: false,
+      available: false,
+      configured: false,
+      source: 'international-search'
+    };
   }
 
-  const base = config.networkMapApiUrl.replace(/\/$/, '');
+  const base = config.internationalSearchApiUrl.replace(/\/$/, '');
   const params = new URLSearchParams({
     q: candidate.name,
-    includeLive: 'false',
-    includeStored: 'true',
-    includeSaved: 'true',
-    includeCandidates: 'true',
-    mode: 'records',
-    page: '1',
-    limit: '100'
+    country: candidate.country,
+    limit: '200'
   });
-  if (candidate.country) params.set('country', candidate.country);
   if (candidate.city) params.set('city', candidate.city);
 
   const result = await getJson<{
-    providers?: NetworkMapProvider[];
-    records?: NetworkMapProvider[];
-    partial?: boolean;
-    warnings?: string[];
-    databaseProjects?: string[];
-  }>(`${base}/api/provider-explorer?${params.toString()}`);
+    results?: ExistingNetworkProvider[];
+    total?: number;
+  }>(`${base}/api/network/search?${params.toString()}`);
 
   if (!result) {
-    return { found: false, available: false, configured: true, source: 'network-map' };
+    return {
+      found: false,
+      available: false,
+      configured: true,
+      source: 'international-search'
+    };
   }
 
-  const providers = result.providers || result.records || [];
+  const providers = result.results || [];
   const ranked = providers
-    .map((provider) => ({ provider, score: scoreNetworkMapMatch(candidate, provider) }))
+    .map((provider) => ({
+      provider,
+      score: scoreExistingNetworkMatch(candidate, provider)
+    }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
-  if (!best || best.score < 0.94) {
+  if (!best || best.score < 0.95) {
     return {
       found: false,
-      available: !result.partial,
+      available: true,
       configured: true,
-      source: 'network-map',
+      source: 'international-search',
       details: {
         checked: providers.length,
-        partial: Boolean(result.partial),
-        warnings: result.warnings || []
+        total: result.total ?? providers.length
       }
     };
   }
@@ -182,41 +174,13 @@ export async function checkNetworkMap(candidate: ProviderCandidate): Promise<Ext
     found: true,
     available: true,
     configured: true,
-    source: 'network-map',
+    source: 'international-search',
     recordId: best.provider.id,
-    label: best.provider.name,
+    label: best.provider.providerName || best.provider.organizationName || undefined,
     confidence: best.score,
     details: {
       provider: best.provider,
-      partial: Boolean(result.partial),
-      warnings: result.warnings || [],
-      databaseProjects: result.databaseProjects || []
+      total: result.total ?? providers.length
     }
-  };
-}
-
-export async function checkInternationalSearch(candidate: ProviderCandidate): Promise<ExternalMatch> {
-  if (!config.internationalSearchApiUrl) {
-    return { found: false, available: false, configured: false, source: 'international-search' };
-  }
-
-  const result = await postJson<Record<string, unknown>>(
-    `${config.internationalSearchApiUrl.replace(/\/$/, '')}/api/outreach-match`,
-    candidate
-  );
-
-  if (!result) {
-    return { found: false, available: false, configured: true, source: 'international-search' };
-  }
-
-  return {
-    found: Boolean(result.found),
-    available: result.available !== false,
-    configured: true,
-    source: 'international-search',
-    recordId: typeof result.recordId === 'string' ? result.recordId : undefined,
-    label: typeof result.label === 'string' ? result.label : undefined,
-    confidence: typeof result.confidence === 'number' ? result.confidence : undefined,
-    details: result
   };
 }
