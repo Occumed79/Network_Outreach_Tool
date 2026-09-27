@@ -63,7 +63,7 @@ The foundation branch includes:
 - outreach queue API
 - initial premium-light web command center
 
-The first full vertical slice is **South Africa Dental**. Apollo is the second large-scale validation campaign.
+The application is intentionally geography- and provider-type-agnostic. Specific campaigns such as Apollo or a dental market search are validation workloads, not hard-coded product features.
 
 ## Local development
 
