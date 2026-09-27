@@ -43,7 +43,7 @@ export interface GateResult {
   confidence: number;
   reasons: string[];
   matchedFacilityId?: string;
-  matchedExternalSource?: 'network-map' | 'international-search' | 'outreach';
+  matchedExternalSource?: 'international-search' | 'outreach';
 }
 
 export interface ProviderTypeProfile {
