@@ -3,11 +3,22 @@ import { config } from './config.js';
 
 const { Pool } = pg;
 
+function sslOptions(connectionString: string) {
+  try {
+    const host = new URL(connectionString).hostname;
+    return host === 'localhost' || host === '127.0.0.1'
+      ? false
+      : { rejectUnauthorized: false };
+  } catch {
+    return { rejectUnauthorized: false };
+  }
+}
+
 export const operationalDb = config.databaseUrl
   ? new Pool({
       connectionString: config.databaseUrl,
       max: 10,
-      ssl: { rejectUnauthorized: false }
+      ssl: sslOptions(config.databaseUrl)
     })
   : null;
 
