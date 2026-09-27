@@ -1,46 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { PROVIDER_TYPE_PROFILES, type ProviderCandidate } from '@network-outreach/core';
+import type { ProviderCandidate, ProviderTypeProfile } from '@network-outreach/core';
 import {
   buildSearchQueries,
   dedupeProviderCandidates,
   parseJsonObject
 } from './researchWorker.js';
 
-test('dental research queries carry location and required capabilities', () => {
-  const profile = PROVIDER_TYPE_PROFILES.find((item) => item.id === 'dental');
-  assert.ok(profile);
+test('research queries carry arbitrary geography and profile capabilities', () => {
+  const profile: ProviderTypeProfile = {
+    id: 'test-specialty',
+    label: 'Specialty Care',
+    agreementTemplateKey: 'test-agreement',
+    emailTemplateKey: 'test-email',
+    requiredCapabilities: ['Capability Alpha', 'Capability Beta', 'Capability Gamma'],
+    preferredContactRoles: ['Practice Manager'],
+    excludedEntityKinds: ['directory']
+  };
 
   const queries = buildSearchQueries({
-    prompt: 'Find dental providers in South Africa',
-    providerType: 'dental',
-    country: 'South Africa',
-    city: 'Cape Town'
+    prompt: 'Find specialty providers matching my requirements',
+    providerType: profile.id,
+    country: 'Example Country',
+    city: 'Example City'
   }, profile);
 
   assert.ok(queries.length >= 3);
-  assert.ok(queries.every((query) => query.includes('South Africa')));
-  assert.ok(queries.some((query) => query.toLowerCase().includes('bitewing')));
-  assert.ok(queries.some((query) => query.toLowerCase().includes('panoramic')));
-  assert.ok(queries.some((query) => query.includes('Cape Town')));
+  assert.ok(queries.some((query) => query.includes('Example Country')));
+  assert.ok(queries.some((query) => query.includes('Example City')));
+  assert.ok(queries.some((query) => query.includes('Capability Alpha')));
+  assert.ok(queries.some((query) => query.includes('Capability Gamma')));
 });
 
 test('candidate dedupe merges services for the same website domain', () => {
   const input: ProviderCandidate[] = [
     {
       name: 'Example Dental Centre',
-      country: 'South Africa',
-      city: 'Cape Town',
-      website: 'https://example.co.za/dental',
+      country: 'Example Country',
+      city: 'Example City',
+      website: 'https://example.test/dental',
       services: ['Bitewing radiographs']
     },
     {
       name: 'Example Dental',
-      country: 'South Africa',
-      city: 'Cape Town',
-      website: 'https://www.example.co.za/contact',
-      email: 'accounts@example.co.za',
+      country: 'Example Country',
+      city: 'Example City',
+      website: 'https://www.example.test/contact',
+      email: 'accounts@example.test',
       services: ['Panoramic radiograph']
     }
   ];
@@ -48,7 +55,7 @@ test('candidate dedupe merges services for the same website domain', () => {
   const result = dedupeProviderCandidates(input);
 
   assert.equal(result.length, 1);
-  assert.equal(result[0].email, 'accounts@example.co.za');
+  assert.equal(result[0].email, 'accounts@example.test');
   assert.deepEqual(new Set(result[0].services), new Set([
     'Bitewing radiographs',
     'Panoramic radiograph'
