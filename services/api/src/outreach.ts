@@ -295,13 +295,84 @@ export async function prepareCampaignTarget(targetId: string) {
   };
 }
 
+
+async function withConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>
+) {
+  let cursor = 0;
+  const runners = Array.from(
+    { length: Math.min(concurrency, Math.max(items.length, 1)) },
+    async () => {
+      while (cursor < items.length) {
+        const item = items[cursor++];
+        await worker(item);
+      }
+    }
+  );
+  await Promise.all(runners);
+}
+
+export async function prepareCampaignBatch(
+  campaignId: string,
+  targetIds?: string[]
+) {
+  if (!operationalDb) throw new Error('Operational database is not configured.');
+
+  const params: unknown[] = [campaignId];
+  let idFilter = '';
+  if (targetIds && targetIds.length > 0) {
+    params.push(targetIds);
+    idFilter = 'and ct.id = any($2::uuid[])';
+  }
+
+  const result = await operationalDb.query<{ id: string }>(
+    `
+      select ct.id::text
+      from campaign_targets ct
+      where ct.campaign_id = $1
+        ${idFilter}
+        and ct.status in ('NOT_STARTED', 'READY', 'WAITING_ON_PSA')
+      order by ct.created_at
+      limit 5000
+    `,
+    params
+  );
+
+  const summary = {
+    campaignId,
+    attempted: result.rows.length,
+    ready: 0,
+    waitingOnPsa: 0,
+    errors: 0,
+    errorDetails: [] as Array<{ targetId: string; error: string }>
+  };
+
+  await withConcurrency(result.rows, 4, async ({ id }) => {
+    try {
+      const prepared = await prepareCampaignTarget(id);
+      if (prepared.readyForExport) summary.ready += 1;
+      else summary.waitingOnPsa += 1;
+    } catch (error) {
+      summary.errors += 1;
+      summary.errorDetails.push({
+        targetId: id,
+        error: error instanceof Error ? error.message : 'Preparation failed.'
+      });
+    }
+  });
+
+  return summary;
+}
+
 function csvEscape(value: unknown): string {
   const text = value == null ? '' : String(value);
   if (/[",\n\r]/.test(text)) return `"${text.replaceAll('"', '""')}"`;
   return text;
 }
 
-export async function exportReadyQueueCsv(): Promise<string> {
+export async function exportReadyQueueCsv(campaignId?: string): Promise<string> {
   if (!operationalDb) throw new Error('Operational database is not configured.');
 
   const result = await operationalDb.query(
@@ -336,8 +407,10 @@ export async function exportReadyQueueCsv(): Promise<string> {
       where om.status = 'READY'
         and ct.status = 'READY'
         and (ct.psa_needed = false or ad.generation_status = 'GENERATED')
+        and ($1::uuid is null or ct.campaign_id = $1::uuid)
       order by c.created_at, f.country, f.city, f.name
-    `
+    `,
+    [campaignId || null]
   );
 
   const headers = [
