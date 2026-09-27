@@ -395,6 +395,41 @@ app.post('/api/campaign-targets/:targetId/prepare', async (req, res) => {
   }
 });
 
+app.get('/api/agreements/:agreementId/download', async (req, res) => {
+  if (!operationalDb) {
+    res.status(503).json({ error: 'Operational database is not configured.' });
+    return;
+  }
+
+  const result = await operationalDb.query(
+    `
+      select file_name, content_type, file_bytes, generation_status
+      from agreement_documents
+      where id = $1
+      limit 1
+    `,
+    [req.params.agreementId]
+  );
+
+  const document = result.rows[0];
+  if (!document || document.generation_status !== 'GENERATED' || !document.file_bytes) {
+    res.status(404).json({ error: 'Generated agreement was not found.' });
+    return;
+  }
+
+  const fileName = String(document.file_name || 'provider-agreement.docx')
+    .replace(/[\r\n"]/g, '');
+  res.setHeader(
+    'content-type',
+    document.content_type || 'application/octet-stream'
+  );
+  res.setHeader(
+    'content-disposition',
+    `attachment; filename="${fileName}"`
+  );
+  res.send(document.file_bytes);
+});
+
 app.get('/api/outreach/export.csv', async (_req, res) => {
   try {
     const csv = await exportReadyQueueCsv();
