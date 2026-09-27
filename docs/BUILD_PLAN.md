@@ -1,6 +1,6 @@
 # Build Plan
 
-## Foundation — current build
+## Foundation — completed
 
 - Monorepo scaffold.
 - Locked project instructions.
@@ -11,49 +11,77 @@
 - Research-run API.
 - Outreach queue API.
 - Initial web command center.
+- Candidate review and promotion workflow.
+- Agreement-aware outreach preparation.
+- Outlook export contract.
 
-## Vertical Slice 1 — South Africa Dental
+## Capability 1 — Universal provider research
 
-Goal: prove the whole operating loop.
+Goal: accept any provider-development request without hard-coding a country, specialty, company, or campaign.
 
-User request:
-> Find dental providers in South Africa capable of comprehensive dental evaluations, bitewings, and panoramic radiographs. Exclude providers we already know or have already researched. Find usable contact information and prepare qualified targets for outreach.
-
-Required output:
-- research run
-- provider candidates
-- evidence
-- gate decisions
-- contacts
-- service findings
+Required behavior:
+- natural-language research request
+- user-selected or later AI-classified provider type
+- arbitrary country / region / city
+- configurable web research sources
+- source-grounded AI extraction
+- provider candidates with evidence
+- named contacts and usable email addresses when supported
+- service-capability findings
 - pricing findings when available
-- qualified operational facility records
-- campaign targets
-- correct dental email template
-- agreement-generation request
-- READY queue
-- Excel/Outlook batch export
+- no invention of unsupported facts
 
-## Vertical Slice 2 — Apollo
+## Capability 2 — Provider identity and exclusion
 
-Import the Apollo facility roster and treat it as a multi-entity corporate-network campaign.
+Every candidate must pass through the same Provider Gate.
 
-Required capabilities:
-- organization / brand / facility relationship modeling
-- legal/operator/contracting-entity review
-- local vs corporate contact routing
-- one-to-many location targeting
-- separate HOLD state for ambiguous relationship/entity cases
-- batch agreements without layout changes
-- batch outreach with corporate/local routing
+Required checks:
+- this application's prior outreach history
+- Network Map existing-provider intelligence
+- International Search / prior-discovery intelligence
+- website/domain, phone, email, normalized name/address, geography, aliases, parent/network identity
+- explicit suppression rules
+- distinguish active provider, follow-up, prior decline, duplicate, intermediary, closed, seen-before, and genuinely new
 
-## After vertical slices
+## Capability 3 — Outreach preparation
 
-- AI model router and source-grounded research workers.
-- Evidence review UI.
-- Pricing/service intelligence workspace.
-- Follow-up dashboard and communication timeline.
-- Excel/Outlook export/reconciliation.
-- Network Map and International Search production adapters.
-- Pricing Agreement Generator production adapter.
-- Optional mobile review client.
+Qualified providers should flow into campaigns regardless of specialty or geography.
+
+Required behavior:
+- provider-type email template routing
+- existing Pricing Agreement Generator integration
+- provider-specific agreement metadata
+- no agreement page reconstruction in this repo
+- pricing requested / PSA needed / priority / owner / follow-up state
+- READY queue only when required artifacts are available
+
+## Capability 4 — Local Outlook execution
+
+The cloud application prepares outreach. The corporate desktop performs individualized sending.
+
+Required behavior:
+- export READY targets
+- To / CC / subject / body / exact agreement
+- default CC: mcaskey@occu-med.com
+- Excel/VBA draft and send actions
+- no mass BCC blast
+- DRAFTED / SENT / ERROR reconciliation back to the app
+
+## Validation datasets
+
+Validation datasets are tests of the universal system, not product features.
+
+- Apollo: large multi-location corporate-network validation; exercises brand/facility/operator/contracting-entity distinctions and large-batch outreach.
+- Dental, audiology, cardiology, laboratories, vaccination, imaging, occupational health, hospitals, and other provider classes: validate provider-type routing and capability requirements across arbitrary geographies.
+
+## Next implementation work
+
+- complete the generic automated research worker
+- production Network Map adapter
+- production International Search adapter
+- Pricing Agreement Generator adapter
+- evidence review UI
+- pricing/service intelligence workspace
+- follow-up dashboard and communication timeline
+- Excel/Outlook reconciliation
+- model routing / cost controls / evaluation telemetry
