@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  RESEARCH_PRESETS,
+  PROVIDER_TYPE_PROFILES,
   normalizeProviderName
 } from '@network-outreach/core';
 import {
@@ -11,18 +11,16 @@ import {
   targetReadiness
 } from './outreach.js';
 
-test('South Africa dental preset preserves required capabilities and exclusions', () => {
-  const preset = RESEARCH_PRESETS.find((item) => item.id === 'south-africa-dental');
+test('provider profiles carry routing, capability, and exclusion rules', () => {
+  const dental = PROVIDER_TYPE_PROFILES.find((item) => item.id === 'dental');
+  const audiology = PROVIDER_TYPE_PROFILES.find((item) => item.id === 'audiology');
 
-  assert.ok(preset);
-  assert.equal(preset.country, 'South Africa');
-  assert.equal(preset.providerType, 'dental');
-  assert.deepEqual(preset.requiredCapabilities, [
-    'Comprehensive dental examination',
-    'Bitewing radiographs',
-    'Panoramic radiograph'
-  ]);
-  assert.ok(preset.exclusionRules.some((rule) => rule.includes('already-known')));
+  assert.ok(dental);
+  assert.ok(audiology);
+  assert.equal(dental.agreementTemplateKey, 'dental');
+  assert.ok(dental.requiredCapabilities.includes('Bitewing radiographs'));
+  assert.ok(dental.excludedEntityKinds.includes('referral network'));
+  assert.ok(audiology.requiredCapabilities.includes('Pure-tone audiometry'));
 });
 
 test('provider normalization strips legal suffixes without collapsing identity', () => {
