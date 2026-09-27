@@ -6,8 +6,10 @@ import {
 } from '@network-outreach/core';
 import { config } from './config.js';
 
-interface ExternalMatch {
+export interface ExternalMatch {
   found: boolean;
+  available: boolean;
+  configured: boolean;
   source: 'network-map' | 'international-search';
   recordId?: string;
   label?: string;
@@ -125,7 +127,9 @@ async function postJson<T>(url: string, body: unknown): Promise<T | null> {
 }
 
 export async function checkNetworkMap(candidate: ProviderCandidate): Promise<ExternalMatch> {
-  if (!config.networkMapApiUrl) return { found: false, source: 'network-map' };
+  if (!config.networkMapApiUrl) {
+    return { found: false, available: false, configured: false, source: 'network-map' };
+  }
 
   const base = config.networkMapApiUrl.replace(/\/$/, '');
   const params = new URLSearchParams({
@@ -149,7 +153,9 @@ export async function checkNetworkMap(candidate: ProviderCandidate): Promise<Ext
     databaseProjects?: string[];
   }>(`${base}/api/provider-explorer?${params.toString()}`);
 
-  if (!result) return { found: false, source: 'network-map' };
+  if (!result) {
+    return { found: false, available: false, configured: true, source: 'network-map' };
+  }
 
   const providers = result.providers || result.records || [];
   const ranked = providers
@@ -161,6 +167,8 @@ export async function checkNetworkMap(candidate: ProviderCandidate): Promise<Ext
   if (!best || best.score < 0.94) {
     return {
       found: false,
+      available: true,
+      configured: true,
       source: 'network-map',
       details: {
         checked: providers.length,
@@ -172,6 +180,8 @@ export async function checkNetworkMap(candidate: ProviderCandidate): Promise<Ext
 
   return {
     found: true,
+    available: true,
+    configured: true,
     source: 'network-map',
     recordId: best.provider.id,
     label: best.provider.name,
@@ -186,17 +196,23 @@ export async function checkNetworkMap(candidate: ProviderCandidate): Promise<Ext
 }
 
 export async function checkInternationalSearch(candidate: ProviderCandidate): Promise<ExternalMatch> {
-  if (!config.internationalSearchApiUrl) return { found: false, source: 'international-search' };
+  if (!config.internationalSearchApiUrl) {
+    return { found: false, available: false, configured: false, source: 'international-search' };
+  }
 
   const result = await postJson<Record<string, unknown>>(
     `${config.internationalSearchApiUrl.replace(/\/$/, '')}/api/outreach-match`,
     candidate
   );
 
-  if (!result) return { found: false, source: 'international-search' };
+  if (!result) {
+    return { found: false, available: false, configured: true, source: 'international-search' };
+  }
 
   return {
     found: Boolean(result.found),
+    available: result.available !== false,
+    configured: true,
     source: 'international-search',
     recordId: typeof result.recordId === 'string' ? result.recordId : undefined,
     label: typeof result.label === 'string' ? result.label : undefined,
