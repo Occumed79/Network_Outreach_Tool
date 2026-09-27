@@ -41,9 +41,28 @@ test('PSA-required targets cannot become export-ready before generation', () => 
   );
 });
 
-test('generated or non-required agreements allow export readiness', () => {
+test('PSA-required targets stay blocked when generator reports GENERATED without a downloadable agreement', () => {
+  const readinessWithArtifactContract = targetReadiness as unknown as (
+    psaNeeded: boolean,
+    agreementStatus?: string | null,
+    agreementUrl?: string | null
+  ) => { status: string; readyForExport: boolean };
+
   assert.deepEqual(
-    targetReadiness(true, 'GENERATED'),
+    readinessWithArtifactContract(true, 'GENERATED', null),
+    { status: 'WAITING_ON_PSA', readyForExport: false }
+  );
+});
+
+test('generated agreement with a usable download URL or a non-required agreement allows export readiness', () => {
+  const readinessWithArtifactContract = targetReadiness as unknown as (
+    psaNeeded: boolean,
+    agreementStatus?: string | null,
+    agreementUrl?: string | null
+  ) => { status: string; readyForExport: boolean };
+
+  assert.deepEqual(
+    readinessWithArtifactContract(true, 'GENERATED', 'https://example.test/agreement.docx'),
     { status: 'READY', readyForExport: true }
   );
   assert.deepEqual(
@@ -51,7 +70,6 @@ test('generated or non-required agreements allow export readiness', () => {
     { status: 'READY', readyForExport: true }
   );
 });
-
 
 test('preparation preserves later outreach lifecycle states', () => {
   assert.equal(nextPreparationStatus('CONTACTED', 'READY'), 'CONTACTED');
