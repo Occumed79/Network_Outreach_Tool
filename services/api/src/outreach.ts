@@ -75,9 +75,15 @@ async function requestAgreement(payload: Record<string, unknown>) {
   }
 }
 
-export function targetReadiness(psaNeeded: boolean, agreementStatus?: string | null) {
+export function targetReadiness(
+  psaNeeded: boolean,
+  agreementStatus?: string | null,
+  agreementUrl?: string | null
+) {
   if (!psaNeeded) return { status: 'READY', readyForExport: true } as const;
-  if (agreementStatus === 'GENERATED') return { status: 'READY', readyForExport: true } as const;
+  if (agreementStatus === 'GENERATED' && agreementUrl?.trim()) {
+    return { status: 'READY', readyForExport: true } as const;
+  }
   return { status: 'WAITING_ON_PSA', readyForExport: false } as const;
 }
 
@@ -274,7 +280,11 @@ export async function prepareCampaignTarget(targetId: string) {
     }
   }
 
-  const readiness = targetReadiness(Boolean(row.psa_needed), agreement?.generation_status);
+  const readiness = targetReadiness(
+    Boolean(row.psa_needed),
+    agreement?.generation_status,
+    agreement?.storage_url
+  );
   const nextStatus = nextPreparationStatus(String(row.target_status), readiness.status);
 
   await operationalDb.query(
@@ -406,7 +416,13 @@ export async function exportReadyQueueCsv(campaignId?: string): Promise<string> 
       ) ad on true
       where om.status = 'READY'
         and ct.status = 'READY'
-        and (ct.psa_needed = false or ad.generation_status = 'GENERATED')
+        and (
+          ct.psa_needed = false
+          or (
+            ad.generation_status = 'GENERATED'
+            and nullif(trim(ad.storage_url), '') is not null
+          )
+        )
         and ($1::uuid is null or ct.campaign_id = $1::uuid)
       order by c.created_at, f.country, f.city, f.name
     `,
