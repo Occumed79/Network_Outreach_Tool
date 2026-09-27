@@ -15,6 +15,7 @@ function csv(name: string): string[] {
 export const config = {
   port: Number(process.env.PORT || 8787),
   webOrigin: process.env.WEB_ORIGIN?.trim() || 'http://localhost:5173',
+  publicBaseUrl: optional('PUBLIC_BASE_URL'),
   databaseUrl: optional('DATABASE_URL'),
   researchDatabaseUrl: optional('DATABASE_URL_2'),
   networkMapApiUrl: optional('NETWORK_MAP_API_URL'),

@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
   PROVIDER_TYPE_PROFILES,
@@ -395,6 +398,41 @@ app.post('/api/campaign-targets/:targetId/prepare', async (req, res) => {
   }
 });
 
+app.get('/api/agreements/:agreementId/download', async (req, res) => {
+  if (!operationalDb) {
+    res.status(503).json({ error: 'Operational database is not configured.' });
+    return;
+  }
+
+  const result = await operationalDb.query(
+    `
+      select file_name, content_type, file_bytes, generation_status
+      from agreement_documents
+      where id = $1
+      limit 1
+    `,
+    [req.params.agreementId]
+  );
+
+  const document = result.rows[0];
+  if (!document || document.generation_status !== 'GENERATED' || !document.file_bytes) {
+    res.status(404).json({ error: 'Generated agreement was not found.' });
+    return;
+  }
+
+  const fileName = String(document.file_name || 'provider-agreement.docx')
+    .replace(/[\r\n"]/g, '');
+  res.setHeader(
+    'content-type',
+    document.content_type || 'application/octet-stream'
+  );
+  res.setHeader(
+    'content-disposition',
+    `attachment; filename="${fileName}"`
+  );
+  res.send(document.file_bytes);
+});
+
 app.get('/api/outreach/export.csv', async (_req, res) => {
   try {
     const csv = await exportReadyQueueCsv();
@@ -446,6 +484,20 @@ app.post('/api/facilities', async (req, res) => {
 
   res.status(201).json({ facility: result.rows[0] });
 });
+
+if (process.env.NODE_ENV === 'production') {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webDist = path.resolve(here, '../../../apps/web/dist');
+
+  if (fs.existsSync(webDist)) {
+    app.use(express.static(webDist, { index: false }));
+    app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+      res.sendFile(path.join(webDist, 'index.html'));
+    });
+  } else {
+    console.warn(`[web] production web bundle not found at ${webDist}`);
+  }
+}
 
 app.listen(config.port, () => {
   console.log(`Network Outreach API listening on http://localhost:${config.port}`);
