@@ -167,7 +167,7 @@ export async function checkNetworkMap(candidate: ProviderCandidate): Promise<Ext
   if (!best || best.score < 0.94) {
     return {
       found: false,
-      available: true,
+      available: !result.partial,
       configured: true,
       source: 'network-map',
       details: {
