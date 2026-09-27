@@ -86,7 +86,7 @@ export function shouldRequestAgreement(psaNeeded: boolean, agreementStatus?: str
 }
 
 export function nextPreparationStatus(currentStatus: string, readinessStatus: string) {
-  const preparationStates = new Set(['NOT_STARTED', 'RESEARCHING', 'READY', 'WAITING_ON_PSA']);
+  const preparationStates = new Set(['NOT_STARTED', 'READY', 'WAITING_ON_PSA']);
   return preparationStates.has(currentStatus) ? readinessStatus : currentStatus;
 }
 
