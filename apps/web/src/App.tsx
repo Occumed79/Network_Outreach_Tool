@@ -19,6 +19,7 @@ import {
   Upload,
   UsersRound
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 type Health = {
   ok: boolean;
@@ -567,7 +568,7 @@ function App() {
             </section>
 
             <section className="metrics metrics-eight">
-              {[
+              {([
                 ['Active campaigns', dashboard?.activeCampaigns ?? 0, Layers3],
                 ['Providers in outreach', dashboard?.providersInOutreach ?? 0, UsersRound],
                 ['Ready for Outlook', dashboard?.ready ?? 0, CheckCircle2],
@@ -576,7 +577,7 @@ function App() {
                 ['Follow-up due', dashboard?.followUpDue ?? 0, Clock3],
                 ['Needs review', dashboard?.needsReview ?? 0, CircleAlert],
                 ['Bounced', dashboard?.bounced ?? 0, Inbox]
-              ].map(([label, value, Icon]) => (
+              ] as Array<[string, number, LucideIcon]>).map(([label, value, Icon]) => (
                 <article key={String(label)}>
                   <span className="metric-icon"><Icon size={18} /></span>
                   <div>
@@ -921,12 +922,12 @@ function App() {
             </section>
 
             <section className="metrics compact-metrics">
-              {[
+              {([
                 ['Providers', targets.length, UsersRound],
                 ['Ready', readyCount, CheckCircle2],
                 ['Missing email', missingEmailCount, Mail],
                 ['Waiting agreement', waitingAgreementCount, FileText]
-              ].map(([label, value, Icon]) => (
+              ] as Array<[string, number, LucideIcon]>).map(([label, value, Icon]) => (
                 <article key={String(label)}>
                   <span className="metric-icon"><Icon size={18} /></span>
                   <div>
