@@ -122,13 +122,9 @@ const exa: SearchSource = {
   }
 };
 
-
 export interface StructuredProviderResult {
   candidate: ProviderCandidate;
   evidenceText?: string | null;
-  exactPrice?: number | null;
-  currency?: string | null;
-  priceType?: string | null;
   sourceType?: string | null;
   confidence?: number | null;
   raw: Record<string, unknown>;
@@ -141,78 +137,120 @@ interface StructuredDiscoveryContext {
   city?: string | null;
 }
 
-function internationalProviderType(providerType?: string | null): string | undefined {
-  const mapping: Record<string, string> = {
-    occupational_health: 'occupational_health',
-    hospital: 'hospital',
-    laboratory: 'lab',
-    dental: 'dental',
-    imaging: 'imaging_center'
-  };
-  return providerType ? mapping[providerType] : undefined;
+interface NetworkMapProvider {
+  id?: string;
+  name?: string;
+  address?: string | null;
+  city?: string | null;
+  admin_area?: string | null;
+  country?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  source_url?: string | null;
+  source?: string | null;
+  source_kind?: string | null;
+  clinic_type?: string | null;
+  services?: unknown;
+  categories?: unknown;
+  confidence_score?: number | null;
+  status?: string | null;
 }
 
-export async function discoverViaInternationalSearch(
+function textArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => asText(item).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value.split(/[|,;]+/).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+export async function discoverViaNetworkMap(
   context: StructuredDiscoveryContext,
   profile: ProviderTypeProfile
 ): Promise<StructuredProviderResult[]> {
-  if (!config.internationalSearchApiUrl) return [];
+  if (!config.networkMapApiUrl) return [];
 
-  const request = timeoutSignal(45000);
+  const request = timeoutSignal(30000);
   try {
+    const params = new URLSearchParams({
+      q: profile.label,
+      includeLive: 'false',
+      includeStored: 'true',
+      includeSaved: 'false',
+      includeCandidates: 'true',
+      mode: 'records',
+      page: '1',
+      limit: '500'
+    });
+    if (context.country) params.set('country', context.country);
+    if (context.city) params.set('city', context.city);
+
     const response = await fetch(
-      `${config.internationalSearchApiUrl.replace(/\/$/, '')}/api/outside-network/search`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          query: context.prompt || profile.label,
-          providerType: internationalProviderType(context.providerType),
-          country: context.country || undefined,
-          city: context.city || undefined,
-          radiusMiles: 50,
-          services: profile.requiredCapabilities
-        }),
-        signal: request.signal
-      }
+      `${config.networkMapApiUrl.replace(/\/$/, '')}/api/provider-explorer?${params.toString()}`,
+      { signal: request.signal }
     );
 
     if (!response.ok) {
       throw new Error(
-        `International Search discovery failed with HTTP ${response.status}`
+        `Network Map discovery failed with HTTP ${response.status}`
       );
     }
 
     const body = await response.json() as {
-      candidates?: unknown[];
+      providers?: NetworkMapProvider[];
+      records?: NetworkMapProvider[];
+      partial?: boolean;
+      warnings?: string[];
     };
 
-    return (body.candidates || [])
-      .map((item) => item as Record<string, unknown>)
-      .filter((item) => asText(item.providerName) && asText(item.sourceUrl))
-      .map((item) => {
-        const exactPrice = asNumber(item.exactPrice);
-        const confidence = asNumber(item.confidenceScore);
+    const providers = body.providers || body.records || [];
+    return providers
+      .filter((provider) => asText(provider.name))
+      .map((provider) => {
+        const services = [
+          ...textArray(provider.services),
+          ...textArray(provider.categories)
+        ];
+        const sourceUrl =
+          asText(provider.source_url)
+          || asText(provider.website)
+          || null;
+        const evidenceText = [
+          provider.name,
+          provider.address,
+          provider.city,
+          provider.admin_area,
+          provider.country,
+          provider.clinic_type,
+          services.join(', '),
+          provider.source,
+          provider.source_kind,
+          provider.status
+        ].filter(Boolean).join(' | ');
+
         return {
           candidate: {
-            name: asText(item.providerName),
-            country: asText(item.country) || context.country || '',
-            city: asText(item.city) || null,
-            address: null,
-            website: asText(item.website) || null,
-            phone: asText(item.phone) || null,
+            name: asText(provider.name),
+            country: asText(provider.country) || context.country || '',
+            city: asText(provider.city) || null,
+            address: asText(provider.address) || null,
+            website: asText(provider.website) || null,
+            phone: asText(provider.phone) || null,
             email: null,
             providerType: context.providerType || null,
-            sourceUrl: asText(item.sourceUrl),
-            services: []
+            sourceUrl,
+            services
           },
-          evidenceText: asText(item.evidenceText) || null,
-          exactPrice: exactPrice && exactPrice > 0 ? exactPrice : null,
-          currency: asText(item.currency) || null,
-          priceType: asText(item.priceType) || null,
-          sourceType: asText(item.sourceType) || 'international-search',
-          confidence,
-          raw: item
+          evidenceText,
+          sourceType: `network-map:${asText(provider.source_kind) || 'provider'}`,
+          confidence: asNumber(provider.confidence_score) ?? 0.75,
+          raw: {
+            ...provider,
+            networkMapPartial: Boolean(body.partial),
+            networkMapWarnings: body.warnings || []
+          }
         };
       });
   } finally {
@@ -222,7 +260,7 @@ export async function discoverViaInternationalSearch(
 
 export function structuredResearchStatus() {
   return {
-    internationalSearch: Boolean(config.internationalSearchApiUrl)
+    networkMap: Boolean(config.networkMapApiUrl)
   };
 }
 
