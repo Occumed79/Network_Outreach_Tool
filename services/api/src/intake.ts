@@ -51,8 +51,7 @@ const EXCLUDED_DECISIONS = new Set<GateDecision>([
 ]);
 
 const REVIEW_DECISIONS = new Set<GateDecision>([
-  'NEEDS_REVIEW',
-  'SEEN_BEFORE'
+  'NEEDS_REVIEW'
 ]);
 
 function clean(value: unknown): string {
