@@ -6,31 +6,37 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
   PROVIDER_TYPE_PROFILES,
-  normalizeProviderName,
   type ProviderCandidate
 } from '@network-outreach/core';
 import { config } from './config.js';
-import { databaseHealth, operationalDb, researchDb } from './db.js';
+import { databaseHealth, operationalDb } from './db.js';
 import { evaluateProvider } from './providerGate.js';
-import { addResearchCandidate, listResearchCandidates, promoteResearchCandidate } from './research.js';
-import { executeResearchRun, researchWorkerStatus } from './researchWorker.js';
-import { exportReadyQueueCsv, prepareCampaignTarget } from './outreach.js';
+import {
+  campaignIntake,
+  ingestProviders,
+  parseProviderCsv,
+  type IntakeProvider
+} from './intake.js';
+import {
+  exportReadyQueueCsv,
+  prepareCampaignBatch,
+  prepareCampaignTarget
+} from './outreach.js';
 
 const app = express();
 
 app.use(cors({ origin: config.webOrigin, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 app.get('/api/health', async (_req, res) => {
   res.json({
     ok: true,
     service: 'network-outreach-api',
-    databases: await databaseHealth(),
-    adapters: {
-      existingNetwork: Boolean(config.networkMapApiUrl),
-      priorResearch: Boolean(config.internationalSearchApiUrl),
+    database: await databaseHealth(),
+    integrations: {
+      existingNetworkExclusion: Boolean(config.internationalSearchApiUrl),
       agreementGenerator: Boolean(config.agreementGeneratorUrl),
-      researchWorker: researchWorkerStatus()
+      networkMapIntake: true
     }
   });
 });
@@ -39,23 +45,36 @@ app.get('/api/provider-types', (_req, res) => {
   res.json({ providerTypes: PROVIDER_TYPE_PROFILES });
 });
 
-const candidateSchema = z.object({
+const providerSchema = z.object({
   name: z.string().min(1),
-  country: z.string().min(1),
+  country: z.string().optional().default(''),
   city: z.string().nullish(),
+  stateRegion: z.string().nullish(),
+  postalCode: z.string().nullish(),
   address: z.string().nullish(),
   website: z.string().nullish(),
   phone: z.string().nullish(),
   email: z.string().email().nullish(),
+  contactName: z.string().nullish(),
+  contactTitle: z.string().nullish(),
   providerType: z.string().nullish(),
   sourceUrl: z.string().url().nullish(),
-  services: z.array(z.string().min(1)).max(50).optional()
+  sourceSystem: z.string().nullish(),
+  sourceRecordId: z.string().nullish(),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).nullish(),
+  psaNeeded: z.boolean().optional(),
+  pricingRequested: z.boolean().optional(),
+  notes: z.string().nullish(),
+  services: z.array(z.string().min(1)).max(100).optional()
 });
 
 app.post('/api/provider-gate/evaluate', async (req, res) => {
-  const parsed = candidateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid provider candidate', details: parsed.error.flatten() });
+  const parsed = providerSchema.safeParse(req.body);
+  if (!parsed.success || !parsed.data.country) {
+    res.status(400).json({
+      error: 'Provider name and country are required.',
+      details: parsed.success ? undefined : parsed.error.flatten()
+    });
     return;
   }
 
@@ -69,202 +88,15 @@ app.post('/api/provider-gate/evaluate', async (req, res) => {
   }
 });
 
-const researchRunSchema = z.object({
-  prompt: z.string().min(3),
-  providerType: z.string().optional(),
-  country: z.string().optional(),
-  city: z.string().optional(),
-  requestedBy: z.string().default('Alex')
-});
-
-app.post('/api/research-runs', async (req, res) => {
-  const parsed = researchRunSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid research request', details: parsed.error.flatten() });
-    return;
-  }
-
-  const request = parsed.data;
-  if (!researchDb) {
-    res.status(503).json({
-      error: 'Research database is not configured.',
-      request
-    });
-    return;
-  }
-
-  const result = await researchDb.query(
-    `
-      insert into research_runs
-        (prompt, provider_type, country, city, requested_by, status)
-      values ($1, $2, $3, $4, $5, 'QUEUED')
-      returning *
-    `,
-    [request.prompt, request.providerType || null, request.country || null, request.city || null, request.requestedBy]
-  );
-
-  res.status(201).json({ run: result.rows[0] });
-});
-
-app.get('/api/research-runs', async (_req, res) => {
-  if (!researchDb) {
-    res.json({ runs: [] });
-    return;
-  }
-
-  const result = await researchDb.query(
-    `
-      select
-        rr.*,
-        (select count(*)::int from research_candidates rc where rc.research_run_id = rr.id) as candidate_count,
-        (select count(*)::int from research_candidates rc where rc.research_run_id = rr.id and rc.gate_decision = 'NEW') as new_count,
-        (select count(*)::int from research_candidates rc where rc.research_run_id = rr.id and rc.lifecycle_status = 'PROMOTED') as promoted_count
-      from research_runs rr
-      order by rr.created_at desc
-      limit 50
-    `
-  );
-  res.json({ runs: result.rows });
-});
-
-app.post('/api/research-runs/:runId/execute', async (req, res) => {
-  const parsed = z.object({
-    maxQueries: z.number().int().min(1).max(8).optional(),
-    maxResultsPerQuery: z.number().int().min(1).max(20).optional()
-  }).safeParse(req.body ?? {});
-
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid research execution options', details: parsed.error.flatten() });
-    return;
-  }
-
-  try {
-    const result = await executeResearchRun(req.params.runId, parsed.data);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Research execution failed'
-    });
-  }
-});
-
-app.get('/api/research-runs/:runId/candidates', async (req, res) => {
-  try {
-    const candidates = await listResearchCandidates(req.params.runId);
-    res.json({ candidates });
-  } catch (error) {
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Could not load research candidates'
-    });
-  }
-});
-
-app.post('/api/research-runs/:runId/candidates', async (req, res) => {
-  const parsed = candidateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid provider candidate', details: parsed.error.flatten() });
-    return;
-  }
-
-  try {
-    const result = await addResearchCandidate(
-      req.params.runId,
-      parsed.data as ProviderCandidate
-    );
-    res.status(201).json(result);
-  } catch (error) {
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Could not add research candidate'
-    });
-  }
-});
-
-app.post('/api/research-runs/:runId/campaign', async (req, res) => {
-  if (!researchDb || !operationalDb) {
-    res.status(503).json({ error: 'Both databases must be configured.' });
-    return;
-  }
-
-  const runResult = await researchDb.query(
-    'select * from research_runs where id = $1',
-    [req.params.runId]
-  );
-  const run = runResult.rows[0];
-  if (!run) {
-    res.status(404).json({ error: 'Research run was not found.' });
-    return;
-  }
-
-  const existing = await operationalDb.query(
-    'select * from campaigns where research_run_id = $1 limit 1',
-    [run.id]
-  );
-  if (existing.rows[0]) {
-    res.json({ campaign: existing.rows[0], reused: true });
-    return;
-  }
-
-  const name = [run.country, run.provider_type]
-    .filter(Boolean)
-    .map((value: string) => value.replaceAll('_', ' '))
-    .join(' · ');
-
-  const created = await operationalDb.query(
-    `
-      insert into campaigns
-        (name, description, provider_type, country, city, original_request, status, owner, research_run_id)
-      values
-        ($1,$2,$3,$4,$5,$6,'ACTIVE',$7,$8)
-      returning *
-    `,
-    [
-      name || `Research ${run.id}`,
-      `Campaign created from research run ${run.id}`,
-      run.provider_type,
-      run.country,
-      run.city,
-      run.prompt,
-      run.requested_by || 'Alex',
-      run.id
-    ]
-  );
-
-  res.status(201).json({ campaign: created.rows[0], reused: false });
-});
-
-app.post('/api/research-candidates/:candidateId/promote', async (req, res) => {
-  const body = z.object({
-    campaignId: z.string().uuid().optional(),
-    override: z.boolean().default(false)
-  }).safeParse(req.body ?? {});
-
-  if (!body.success) {
-    res.status(400).json({ error: 'Invalid promotion request', details: body.error.flatten() });
-    return;
-  }
-
-  try {
-    const result = await promoteResearchCandidate(
-      req.params.candidateId,
-      body.data.campaignId,
-      body.data.override
-    );
-    res.status(201).json(result);
-  } catch (error) {
-    res.status(409).json({
-      error: error instanceof Error ? error.message : 'Could not promote provider candidate'
-    });
-  }
-});
-
 const campaignSchema = z.object({
-  name: z.string().min(2),
-  description: z.string().optional(),
+  name: z.string().min(2).max(200),
+  description: z.string().max(3000).optional(),
   providerType: z.string().optional(),
   country: z.string().optional(),
   city: z.string().optional(),
-  originalRequest: z.string().optional(),
-  owner: z.string().default('Alex')
+  owner: z.string().default('Alex'),
+  expectedProviders: z.number().int().positive().max(100000).optional(),
+  intakeSource: z.string().max(100).optional()
 });
 
 app.post('/api/campaigns', async (req, res) => {
@@ -282,9 +114,12 @@ app.post('/api/campaigns', async (req, res) => {
   const result = await operationalDb.query(
     `
       insert into campaigns
-        (name, description, provider_type, country, city, original_request, status, owner)
+        (
+          name, description, provider_type, country, city,
+          status, owner, provider_count_expected, intake_source
+        )
       values
-        ($1,$2,$3,$4,$5,$6,'ACTIVE',$7)
+        ($1,$2,$3,$4,$5,'ACTIVE',$6,$7,$8)
       returning *
     `,
     [
@@ -293,8 +128,9 @@ app.post('/api/campaigns', async (req, res) => {
       data.providerType || null,
       data.country || null,
       data.city || null,
-      data.originalRequest || null,
-      data.owner
+      data.owner,
+      data.expectedProviders || null,
+      data.intakeSource || null
     ]
   );
 
@@ -311,25 +147,411 @@ app.get('/api/campaigns', async (_req, res) => {
     `
       select
         c.*,
-        count(ct.id)::int as target_count,
-        count(ct.id) filter (where ct.status = 'READY')::int as ready_count,
-        count(ct.id) filter (where ct.status = 'NEED_FOLLOW_UP')::int as follow_up_count
+        count(distinct ct.id)::int as target_count,
+        count(distinct ct.id) filter (where ct.status = 'READY')::int as ready_count,
+        count(distinct ct.id) filter (where ct.status = 'NEED_FOLLOW_UP')::int as follow_up_count,
+        count(distinct ct.id) filter (where ct.status = 'WAITING_ON_PSA')::int as waiting_psa_count,
+        count(distinct cir.id) filter (where cir.disposition in ('EXCLUDED','DUPLICATE_INPUT'))::int as excluded_count,
+        count(distinct cir.id) filter (where cir.disposition = 'REVIEW')::int as review_count,
+        count(distinct om.id) filter (where om.status = 'SENT')::int as sent_count,
+        count(distinct om.id) filter (where om.status = 'BOUNCED')::int as bounced_count,
+        count(distinct om.id) filter (where om.replied_at is not null)::int as replied_count
       from campaigns c
       left join campaign_targets ct on ct.campaign_id = c.id
+      left join campaign_intake_rows cir on cir.campaign_id = c.id
+      left join outreach_messages om on om.campaign_target_id = ct.id
       group by c.id
       order by c.created_at desc
-      limit 100
+      limit 200
     `
   );
 
   res.json({ campaigns: result.rows });
 });
 
-app.get('/api/outreach/queue', async (_req, res) => {
+app.get('/api/campaigns/:campaignId', async (req, res) => {
+  if (!operationalDb) {
+    res.status(503).json({ error: 'Operational database is not configured.' });
+    return;
+  }
+
+  const result = await operationalDb.query(
+    `
+      select
+        c.*,
+        count(distinct ct.id)::int as target_count,
+        count(distinct ct.id) filter (where ct.status = 'NOT_STARTED')::int as not_started_count,
+        count(distinct ct.id) filter (where ct.status = 'READY')::int as ready_count,
+        count(distinct ct.id) filter (where ct.status = 'WAITING_ON_PSA')::int as waiting_psa_count,
+        count(distinct ct.id) filter (where ct.status = 'NEED_FOLLOW_UP')::int as follow_up_count,
+        count(distinct cir.id) filter (where cir.disposition in ('EXCLUDED','DUPLICATE_INPUT'))::int as excluded_count,
+        count(distinct cir.id) filter (where cir.disposition = 'REVIEW')::int as review_count,
+        count(distinct cir.id) filter (where cir.disposition = 'ERROR')::int as error_count,
+        count(distinct om.id) filter (where om.status = 'SENT')::int as sent_count,
+        count(distinct om.id) filter (where om.status = 'BOUNCED')::int as bounced_count,
+        count(distinct om.id) filter (where om.replied_at is not null)::int as replied_count
+      from campaigns c
+      left join campaign_targets ct on ct.campaign_id = c.id
+      left join campaign_intake_rows cir on cir.campaign_id = c.id
+      left join outreach_messages om on om.campaign_target_id = ct.id
+      where c.id = $1
+      group by c.id
+      limit 1
+    `,
+    [req.params.campaignId]
+  );
+
+  if (!result.rows[0]) {
+    res.status(404).json({ error: 'Campaign was not found.' });
+    return;
+  }
+
+  const imports = await operationalDb.query(
+    `
+      select *
+      from campaign_imports
+      where campaign_id = $1
+      order by created_at desc
+      limit 50
+    `,
+    [req.params.campaignId]
+  );
+
+  res.json({ campaign: result.rows[0], imports: imports.rows });
+});
+
+app.get('/api/dashboard', async (_req, res) => {
+  if (!operationalDb) {
+    res.json({
+      activeCampaigns: 0,
+      providersInOutreach: 0,
+      ready: 0,
+      sent: 0,
+      followUpDue: 0,
+      replies: 0,
+      bounced: 0,
+      needsReview: 0
+    });
+    return;
+  }
+
+  const result = await operationalDb.query(
+    `
+      select
+        (select count(*)::int from campaigns where status = 'ACTIVE') as active_campaigns,
+        (select count(*)::int from campaign_targets) as providers_in_outreach,
+        (select count(*)::int from campaign_targets where status = 'READY') as ready,
+        (select count(*)::int from campaign_targets where status = 'NEED_FOLLOW_UP') as follow_up_due,
+        (select count(*)::int from campaign_intake_rows where disposition = 'REVIEW') as needs_review,
+        (select count(*)::int from outreach_messages where status = 'SENT') as sent,
+        (select count(*)::int from outreach_messages where status = 'BOUNCED') as bounced,
+        (select count(*)::int from outreach_messages where replied_at is not null) as replies
+    `
+  );
+
+  const row = result.rows[0];
+  res.json({
+    activeCampaigns: row.active_campaigns,
+    providersInOutreach: row.providers_in_outreach,
+    ready: row.ready,
+    sent: row.sent,
+    followUpDue: row.follow_up_due,
+    replies: row.replies,
+    bounced: row.bounced,
+    needsReview: row.needs_review
+  });
+});
+
+app.post('/api/campaigns/:campaignId/providers', async (req, res) => {
+  const parsed = z.object({
+    providers: z.array(providerSchema).min(1).max(5000),
+    sourceType: z.string().max(100).optional(),
+    fileName: z.string().max(500).nullish(),
+    createdBy: z.string().max(120).optional()
+  }).safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid provider intake', details: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const summary = await ingestProviders(
+      req.params.campaignId,
+      parsed.data.providers as IntakeProvider[],
+      {
+        sourceType: parsed.data.sourceType || 'MANUAL',
+        fileName: parsed.data.fileName || null,
+        createdBy: parsed.data.createdBy || 'Alex'
+      }
+    );
+    res.status(201).json(summary);
+  } catch (error) {
+    res.status(409).json({
+      error: error instanceof Error ? error.message : 'Provider intake failed'
+    });
+  }
+});
+
+app.post(
+  '/api/campaigns/:campaignId/import.csv',
+  express.text({ type: ['text/csv', 'text/plain', 'application/csv'], limit: '10mb' }),
+  async (req, res) => {
+    if (!operationalDb) {
+      res.status(503).json({ error: 'Operational database is not configured.' });
+      return;
+    }
+
+    try {
+      const campaignResult = await operationalDb.query(
+        'select provider_type, country, city from campaigns where id = $1 limit 1',
+        [req.params.campaignId]
+      );
+      const campaign = campaignResult.rows[0];
+      if (!campaign) {
+        res.status(404).json({ error: 'Campaign was not found.' });
+        return;
+      }
+
+      const providers = parseProviderCsv(String(req.body || ''), {
+        providerType: campaign.provider_type,
+        country: campaign.country,
+        city: campaign.city
+      });
+
+      const summary = await ingestProviders(
+        req.params.campaignId,
+        providers,
+        {
+          sourceType: String(req.query.sourceType || 'CSV'),
+          fileName: String(req.query.fileName || 'provider-import.csv'),
+          createdBy: String(req.query.createdBy || 'Alex')
+        }
+      );
+
+      res.status(201).json(summary);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : 'CSV import failed'
+      });
+    }
+  }
+);
+
+app.get('/api/intake/template.csv', (_req, res) => {
+  const template = [
+    'Provider Name,Country,City,State/Region,Address,Website,Phone,Email,Contact Name,Contact Title,Provider Type,Priority,PSA Needed,Pricing Requested,Services,Source URL,Source System,Source ID,Notes',
+    'Example Clinic,Country,City,Region,123 Main St,https://example.com,+1 555 555 5555,contact@example.com,Jane Smith,Practice Manager,dental,HIGH,Yes,Yes,"Comprehensive dental examination; Bitewing radiographs",https://example.com,Network Map,provider-123,'
+  ].join('\n');
+
+  res.setHeader('content-type', 'text/csv; charset=utf-8');
+  res.setHeader('content-disposition', 'attachment; filename="network-outreach-provider-import-template.csv"');
+  res.send(template);
+});
+
+app.get('/api/campaigns/:campaignId/intake', async (req, res) => {
+  try {
+    res.json({ rows: await campaignIntake(req.params.campaignId) });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Could not load campaign intake'
+    });
+  }
+});
+
+app.get('/api/campaigns/:campaignId/targets', async (req, res) => {
   if (!operationalDb) {
     res.json({ targets: [] });
     return;
   }
+
+  const result = await operationalDb.query(
+    `
+      select
+        ct.id,
+        ct.campaign_id,
+        f.id as facility_id,
+        f.name as facility_name,
+        f.city,
+        f.country,
+        f.provider_type,
+        f.general_email,
+        ct.status,
+        ct.gate_decision,
+        ct.priority,
+        ct.owner,
+        ct.pricing_requested,
+        ct.psa_needed,
+        ct.last_contact_at,
+        ct.next_follow_up_at,
+        ct.notes,
+        coalesce(pc.full_name, '') as primary_contact,
+        coalesce(pc.title, '') as contact_title,
+        coalesce(pc.email, f.general_email, '') as primary_email,
+        ad.id as agreement_id,
+        ad.storage_url as agreement_url,
+        ad.generation_status as agreement_status,
+        om.status as message_status,
+        om.sent_at,
+        om.replied_at,
+        om.bounced_at
+      from campaign_targets ct
+      join facilities f on f.id = ct.facility_id
+      left join contacts pc on pc.facility_id = f.id and pc.is_primary = true
+      left join lateral (
+        select id, storage_url, generation_status
+        from agreement_documents
+        where campaign_target_id = ct.id
+        order by created_at desc
+        limit 1
+      ) ad on true
+      left join lateral (
+        select status, sent_at, replied_at, bounced_at
+        from outreach_messages
+        where campaign_target_id = ct.id
+        order by created_at desc
+        limit 1
+      ) om on true
+      where ct.campaign_id = $1
+      order by
+        case ct.priority
+          when 'URGENT' then 0
+          when 'HIGH' then 1
+          when 'MEDIUM' then 2
+          else 3
+        end,
+        f.country,
+        f.city,
+        f.name
+      limit 5000
+    `,
+    [req.params.campaignId]
+  );
+
+  res.json({ targets: result.rows });
+});
+
+app.post('/api/campaigns/:campaignId/prepare', async (req, res) => {
+  const parsed = z.object({
+    targetIds: z.array(z.string().uuid()).max(5000).optional()
+  }).safeParse(req.body ?? {});
+
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid preparation request', details: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const summary = await prepareCampaignBatch(
+      req.params.campaignId,
+      parsed.data.targetIds
+    );
+    res.json(summary);
+  } catch (error) {
+    res.status(409).json({
+      error: error instanceof Error ? error.message : 'Campaign preparation failed'
+    });
+  }
+});
+
+app.post('/api/campaign-targets/:targetId/prepare', async (req, res) => {
+  try {
+    const result = await prepareCampaignTarget(req.params.targetId);
+    res.json(result);
+  } catch (error) {
+    res.status(409).json({
+      error: error instanceof Error ? error.message : 'Could not prepare outreach target'
+    });
+  }
+});
+
+const statusSchema = z.object({
+  status: z.enum([
+    'NOT_STARTED',
+    'READY',
+    'CONTACTED',
+    'WAITING_ON_PRICING',
+    'WAITING_ON_PSA',
+    'NEED_FOLLOW_UP',
+    'READY_TO_USE',
+    'NO_FIT',
+    'ON_HOLD',
+    'COMPLETED',
+    'DECLINED',
+    'BOUNCED'
+  ]),
+  notes: z.string().max(5000).optional(),
+  nextFollowUpAt: z.string().datetime().nullish()
+});
+
+app.patch('/api/campaign-targets/:targetId/status', async (req, res) => {
+  const parsed = statusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid status update', details: parsed.error.flatten() });
+    return;
+  }
+  if (!operationalDb) {
+    res.status(503).json({ error: 'Operational database is not configured.' });
+    return;
+  }
+
+  const data = parsed.data;
+  const result = await operationalDb.query(
+    `
+      update campaign_targets
+      set
+        status = $2,
+        notes = coalesce($3, notes),
+        next_follow_up_at = $4,
+        last_contact_at = case
+          when $2 in ('CONTACTED','WAITING_ON_PRICING','WAITING_ON_PSA','NEED_FOLLOW_UP')
+          then coalesce(last_contact_at, now())
+          else last_contact_at
+        end,
+        updated_at = now()
+      where id = $1
+      returning *
+    `,
+    [
+      req.params.targetId,
+      data.status,
+      data.notes || null,
+      data.nextFollowUpAt || null
+    ]
+  );
+
+  if (!result.rows[0]) {
+    res.status(404).json({ error: 'Campaign target was not found.' });
+    return;
+  }
+
+  await operationalDb.query(
+    `
+      insert into outreach_events
+        (campaign_target_id, event_type, method, outcome, notes, next_follow_up_at)
+      values
+        ($1, 'STATUS_CHANGE', 'NETWORK_OUTREACH', $2, $3, $4)
+    `,
+    [
+      req.params.targetId,
+      data.status,
+      data.notes || null,
+      data.nextFollowUpAt || null
+    ]
+  );
+
+  res.json({ target: result.rows[0] });
+});
+
+app.get('/api/outreach/queue', async (req, res) => {
+  if (!operationalDb) {
+    res.json({ targets: [] });
+    return;
+  }
+
+  const campaignId = typeof req.query.campaignId === 'string'
+    ? req.query.campaignId
+    : null;
 
   const result = await operationalDb.query(
     `
@@ -371,6 +593,7 @@ app.get('/api/outreach/queue', async (_req, res) => {
         order by created_at desc
         limit 1
       ) om on true
+      where ($1::uuid is null or ct.campaign_id = $1::uuid)
       order by
         case ct.priority
           when 'URGENT' then 0
@@ -380,22 +603,12 @@ app.get('/api/outreach/queue', async (_req, res) => {
         end,
         ct.next_follow_up_at nulls last,
         ct.created_at desc
-      limit 500
-    `
+      limit 5000
+    `,
+    [campaignId]
   );
 
   res.json({ targets: result.rows });
-});
-
-app.post('/api/campaign-targets/:targetId/prepare', async (req, res) => {
-  try {
-    const result = await prepareCampaignTarget(req.params.targetId);
-    res.json(result);
-  } catch (error) {
-    res.status(409).json({
-      error: error instanceof Error ? error.message : 'Could not prepare outreach target'
-    });
-  }
 });
 
 app.get('/api/agreements/:agreementId/download', async (req, res) => {
@@ -422,20 +635,17 @@ app.get('/api/agreements/:agreementId/download', async (req, res) => {
 
   const fileName = String(document.file_name || 'provider-agreement.docx')
     .replace(/[\r\n"]/g, '');
-  res.setHeader(
-    'content-type',
-    document.content_type || 'application/octet-stream'
-  );
-  res.setHeader(
-    'content-disposition',
-    `attachment; filename="${fileName}"`
-  );
+  res.setHeader('content-type', document.content_type || 'application/octet-stream');
+  res.setHeader('content-disposition', `attachment; filename="${fileName}"`);
   res.send(document.file_bytes);
 });
 
-app.get('/api/outreach/export.csv', async (_req, res) => {
+app.get('/api/outreach/export.csv', async (req, res) => {
   try {
-    const csv = await exportReadyQueueCsv();
+    const campaignId = typeof req.query.campaignId === 'string'
+      ? req.query.campaignId
+      : undefined;
+    const csv = await exportReadyQueueCsv(campaignId);
     res.setHeader('content-type', 'text/csv; charset=utf-8');
     res.setHeader('content-disposition', 'attachment; filename="network-outreach-ready.csv"');
     res.send(csv);
@@ -444,45 +654,6 @@ app.get('/api/outreach/export.csv', async (_req, res) => {
       error: error instanceof Error ? error.message : 'Could not export outreach queue'
     });
   }
-});
-
-app.post('/api/facilities', async (req, res) => {
-  const parsed = candidateSchema.extend({
-    organizationName: z.string().optional()
-  }).safeParse(req.body);
-
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid facility', details: parsed.error.flatten() });
-    return;
-  }
-  if (!operationalDb) {
-    res.status(503).json({ error: 'Operational database is not configured.' });
-    return;
-  }
-
-  const data = parsed.data;
-  const result = await operationalDb.query(
-    `
-      insert into facilities
-        (name, normalized_name, country, city, address, website, website_domain, phone, phone_normalized, provider_type, general_email)
-      values
-        ($1, $2, $3, $4, $5, $6, nullif(regexp_replace(lower(coalesce($6,'')), '^https?://(www\\.)?|/.*$', '', 'g'), ''), $7, regexp_replace(coalesce($7,''), '[^0-9+]', '', 'g'), $8, $9)
-      returning *
-    `,
-    [
-      data.name,
-      normalizeProviderName(data.name),
-      data.country,
-      data.city || null,
-      data.address || null,
-      data.website || null,
-      data.phone || null,
-      data.providerType || null,
-      data.email || null
-    ]
-  );
-
-  res.status(201).json({ facility: result.rows[0] });
 });
 
 if (process.env.NODE_ENV === 'production') {

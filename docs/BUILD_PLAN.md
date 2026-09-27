@@ -1,88 +1,85 @@
 # Build Plan
 
-## Foundation — completed
+## Product definition
 
-- Monorepo scaffold.
-- Locked project instructions.
-- Two-database schema.
-- Provider-type profiles.
-- Provider Gate service.
-- External adapter contracts.
-- Research-run API.
-- Outreach queue API.
-- Initial web command center.
-- Candidate review and promotion workflow.
-- Agreement-aware outreach preparation.
-- Outlook export contract.
+Network Outreach is for **large-scale provider outreach after providers have already been identified**.
 
-## Capability 1 — Universal provider research
+No provider-research functionality belongs in this repository.
 
-Goal: accept any provider-development request without hard-coding a country, specialty, company, or campaign.
+## Phase 1 — Outreach foundation
 
-Required behavior:
-- natural-language research request
-- user-selected or later AI-classified provider type
-- arbitrary country / region / city
-- Network Map as the primary structured provider-discovery/intelligence source
-- optional supplemental web research sources
-- source-grounded AI extraction where needed
-- provider candidates with evidence
-- named contacts and usable email addresses when supported
-- service-capability findings
-- pricing findings when available
-- no invention of unsupported facts
+Completed / current:
+- operational Neon schema
+- provider identity normalization
+- International Search current-network exclusion
+- provider-type routing profiles
+- email templates
+- Pricing Agreement Generator integration
+- agreement persistence
+- Outlook export
+- communication/status model
 
-## Capability 2 — Provider identity and exclusion
+## Phase 2 — Large-scale intake
 
-Every candidate must pass through the same Provider Gate.
+Current focus:
+- campaign creation
+- CSV intake
+- manual intake
+- Network Map JSON handoff contract
+- 5,000-row bounded batches
+- batch dedupe
+- intake audit rows
+- exclusion / review / error counts
+- reuse of prior Outreach facilities
 
-Required checks:
-- this application's prior outreach history
-- International Search existing-provider/network exclusion
-- Network Map discovery provenance on the candidate, never as an exclusion source
-- website/domain, phone, email, normalized name/address, geography, aliases, parent/network identity
-- explicit suppression rules
-- distinguish active provider, follow-up, prior decline, duplicate, intermediary, closed, seen-before, and genuinely new
+## Phase 3 — Batch preparation
 
-## Capability 3 — Outreach preparation
+- prepare selected providers
+- prepare all eligible providers
+- missing-email visibility
+- agreement-generation status
+- READY count
+- export only fully prepared targets
+- retry failed agreement preparation safely
 
-Qualified providers should flow into campaigns regardless of specialty or geography.
+## Phase 4 — Outlook round trip
 
-Required behavior:
-- provider-type email template routing
-- existing Pricing Agreement Generator integration
-- provider-specific agreement metadata
-- no agreement page reconstruction in this repo
-- pricing requested / PSA needed / priority / owner / follow-up state
-- READY queue only when required artifacts are available
+- draft/send individualized emails
+- return DRAFTED / SENT / ERROR to the application
+- capture bounces and replies
+- preserve Outlook identifiers so exact drafts can be reconciled
 
-## Capability 4 — Local Outlook execution
+## Phase 5 — Follow-up operations
 
-The cloud application prepares outreach. The corporate desktop performs individualized sending.
+- follow-up due dashboard
+- waiting on pricing
+- waiting on PSA
+- replied
+- declined
+- ready to use
+- completed
+- campaign completion metrics
 
-Required behavior:
-- export READY targets
-- To / CC / subject / body / exact agreement
-- default CC: mcaskey@occu-med.com
-- Excel/VBA draft and send actions
-- no mass BCC blast
-- DRAFTED / SENT / ERROR reconciliation back to the app
+## Phase 6 — UX polish
 
-## Validation datasets
+Use the design system to make high-volume work fast:
+- compact campaign overview
+- bulk selection
+- sticky provider table controls
+- obvious exceptions
+- quick filters
+- provider detail drawer
+- batch action feedback
+- agreement/message preview
+- keyboard-efficient operations
 
-Validation datasets are tests of the universal system, not product features.
+## Explicit exclusions
 
-- Apollo: large multi-location corporate-network validation; exercises brand/facility/operator/contracting-entity distinctions and large-batch outreach.
-- Dental, audiology, cardiology, laboratories, vaccination, imaging, occupational health, hospitals, and other provider classes: validate provider-type routing and capability requirements across arbitrary geographies.
-
-## Next implementation work
-
-- complete the generic automated research worker
-- production Network Map discovery adapter
-- production International Search existing-network exclusion adapter
-- Pricing Agreement Generator adapter
-- evidence review UI
-- pricing/service intelligence workspace
-- follow-up dashboard and communication timeline
-- Excel/Outlook reconciliation
-- model routing / cost controls / evaluation telemetry
+Do not add:
+- research runs
+- web-search engines
+- provider-discovery AI
+- Tavily/Exa research orchestration
+- natural-language provider finder
+- separate research database
+- duplicate copies of Network Map or International Search
