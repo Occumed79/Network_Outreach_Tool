@@ -22,8 +22,8 @@ This application is being built from a blank repository around the full workflow
 
 ## What it does not replace
 
-- **Network Map** — canonical existing provider/network intelligence and exclusion source
-- **International Search** — prior discovery/seen-before intelligence and research source
+- **Network Map** — provider-discovery/intelligence source for providers outside the current Occu-Med network
+- **International Search** — existing/current provider-network data used as the exclusion list
 - **Pricing Agreement Generator** — existing document-generation engine
 - **Outlook** — corporate email delivery via the local Excel/VBA bridge
 
@@ -58,7 +58,7 @@ The foundation branch includes:
 - provider-type routing profiles
 - approved provider-account email seed
 - Provider Gate API
-- Network Map and International Search adapter contracts
+- Network Map discovery adapter and International Search existing-network exclusion adapter
 - research-run API
 - outreach queue API
 - initial premium-light web command center
