@@ -23,8 +23,9 @@ Required behavior:
 - natural-language research request
 - user-selected or later AI-classified provider type
 - arbitrary country / region / city
-- configurable web research sources
-- source-grounded AI extraction
+- Network Map as the primary structured provider-discovery/intelligence source
+- optional supplemental web research sources
+- source-grounded AI extraction where needed
 - provider candidates with evidence
 - named contacts and usable email addresses when supported
 - service-capability findings
@@ -37,8 +38,8 @@ Every candidate must pass through the same Provider Gate.
 
 Required checks:
 - this application's prior outreach history
-- Network Map existing-provider intelligence
-- International Search / prior-discovery intelligence
+- International Search existing-provider/network exclusion
+- Network Map discovery provenance on the candidate, never as an exclusion source
 - website/domain, phone, email, normalized name/address, geography, aliases, parent/network identity
 - explicit suppression rules
 - distinguish active provider, follow-up, prior decline, duplicate, intermediary, closed, seen-before, and genuinely new
@@ -77,8 +78,8 @@ Validation datasets are tests of the universal system, not product features.
 ## Next implementation work
 
 - complete the generic automated research worker
-- production Network Map adapter
-- production International Search adapter
+- production Network Map discovery adapter
+- production International Search existing-network exclusion adapter
 - Pricing Agreement Generator adapter
 - evidence review UI
 - pricing/service intelligence workspace
