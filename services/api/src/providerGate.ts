@@ -6,7 +6,7 @@ import {
   type ProviderCandidate
 } from '@network-outreach/core';
 import { operationalDb } from './db.js';
-import { checkInternationalSearch, checkNetworkMap } from './adapters.js';
+import { checkInternationalSearch } from './adapters.js';
 
 interface LocalMatch {
   facility_id: string;
@@ -139,59 +139,40 @@ export async function evaluateProvider(candidate: ProviderCandidate): Promise<Ga
     reasons.push('Matched an existing local provider/facility record.');
   }
 
-  const [networkMap, internationalSearch] = await Promise.all([
-    checkNetworkMap(candidate),
-    checkInternationalSearch(candidate)
-  ]);
-
-  if (networkMap.found) {
-    return {
-      decision: 'EXISTING_NETWORK',
-      confidence: networkMap.confidence ?? 0.95,
-      reasons: [
-        'Network Map reports a matching provider already known to Occu-Med.',
-        ...(networkMap.label ? [`Match: ${networkMap.label}`] : [])
-      ],
-      matchedExternalSource: 'network-map'
-    };
-  }
-
-  if (internationalSearch.found) {
-    return {
-      decision: 'SEEN_BEFORE',
-      confidence: internationalSearch.confidence ?? 0.9,
-      reasons: [
-        'International Search reports this provider was previously discovered or investigated.',
-        ...(internationalSearch.label ? [`Match: ${internationalSearch.label}`] : [])
-      ],
-      matchedExternalSource: 'international-search'
-    };
-  }
-
   if (local) {
     return {
       decision: 'DUPLICATE',
       confidence: 0.95,
       reasons: [
         ...reasons,
-        'Matched an existing operational facility record; external checks cannot create a second facility.'
+        'Matched an existing Network Outreach facility record; do not create another outreach target.'
       ],
       matchedFacilityId: local.facility_id,
       matchedExternalSource: 'outreach'
     };
   }
 
-  const unavailableSources = [networkMap, internationalSearch]
-    .filter((check) => !check.available)
-    .map((check) => check.source);
+  const internationalSearch = await checkInternationalSearch(candidate);
 
-  if (unavailableSources.length > 0) {
+  if (internationalSearch.found) {
+    return {
+      decision: 'EXISTING_NETWORK',
+      confidence: internationalSearch.confidence ?? 0.97,
+      reasons: [
+        'International Search existing-network data reports this provider is already in the Occu-Med network.',
+        ...(internationalSearch.label ? [`Match: ${internationalSearch.label}`] : [])
+      ],
+      matchedExternalSource: 'international-search'
+    };
+  }
+
+  if (!internationalSearch.available) {
     return {
       decision: 'NEEDS_REVIEW',
       confidence: 0.5,
       reasons: [
-        `Could not complete required exclusion checks: ${unavailableSources.join(', ')}.`,
-        'Provider is not classified as NEW until the exclusion sources are available.'
+        'Could not complete the International Search existing-network exclusion check.',
+        'Provider is not classified as NEW until the existing-network exclusion source is available.'
       ]
     };
   }
@@ -199,6 +180,6 @@ export async function evaluateProvider(candidate: ProviderCandidate): Promise<Ga
   return {
     decision: 'NEW',
     confidence: 0.9,
-    reasons: ['No existing provider, prior outreach, or configured external-system match was found.']
+    reasons: ['No prior outreach record or International Search existing-network match was found.']
   };
 }
