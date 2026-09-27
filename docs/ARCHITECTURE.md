@@ -1,173 +1,151 @@
-# Network Outreach Tool Architecture
+# Network Outreach Architecture
 
 ## Product boundary
 
-Network Outreach Tool is the orchestration and operating layer for provider-network development. It does not replace Network Map, International Search, Pricing Agreement Generator, or Outlook. It coordinates them.
+Network Outreach is the execution layer after provider identification.
 
-## System map
+It must not duplicate Network Map's research/discovery function.
+
+## System flow
 
 ```text
-Natural-language request
-        |
-        v
-Research run
-        |
-        +--> Network Map provider discovery
-        +--> supplemental web/AI discovery
-        +--> contact research
-        +--> service research
-        +--> pricing research
-        +--> evidence capture
-        |
-        v
-Provider Gate
-        |
-        +--> this app's operational provider/outreach history
-        +--> International Search existing-provider exclusion
-        +--> this app's prior outreach / suppression history
-        |
-        v
-Qualified target
-        |
-        +--> provider-type profile
-        +--> email template
-        +--> Pricing Agreement Generator adapter
-        |
-        v
-Review / READY queue
-        |
-        v
-Excel + Outlook local bridge
-        |
-        v
-Draft / send / reply / follow-up
-        |
-        v
-Operational history + provider onboarding
+Network Map / CSV / manual provider list
+                |
+                v
+        NETWORK OUTREACH
+        Provider intake
+                |
+                v
+      Local outreach history
+                |
+                v
+      International Search
+  existing-network exclusion
+        |               |
+   existing           eligible
+      |                 |
+   exclude              v
+                 Campaign target
+                        |
+              +---------+---------+
+              |                   |
+              v                   v
+        Email template      Agreement route
+                                  |
+                                  v
+                      Pricing Agreement Generator
+              |                   |
+              +---------+---------+
+                        v
+                  READY queue
+                        |
+                        v
+                  Excel / Outlook
+                        |
+                        v
+             Sent / Reply / Follow-up
+                        |
+                        v
+                   Completed
 ```
 
-## Two-database design
+## Data ownership
 
-### DATABASE_URL — operational
+Network Outreach uses one operational Neon database.
 
-System-of-record for the workflow owned by this app:
-- organizations and facilities
-- contacts
-- services
-- pricing
-- evidence promoted to operational records
-- suppression/exclusion rules
-- campaigns and targets
+It owns:
+- campaigns
+- intake batches
+- intake rows
+- facilities used in outreach
+- contacts used in outreach
+- campaign targets
 - email templates
-- agreement-document references
-- outreach messages and events
-- follow-up state
+- agreements
+- messages
+- events/status history
 
-### DATABASE_URL_2 — research
+The application does not own a research database.
 
-Working area for noisy/ephemeral research:
-- research runs
-- raw candidates
-- evidence
-- contact candidates
-- service findings
-- pricing findings
-- external-system match candidates
-- model decisions
-- research events
+## Provider intake
 
-Only reviewed/qualified records are promoted into the operational database.
+Provider intake accepts records that have already been identified.
 
-## Integration contracts
+Supported sources:
+- Network Map handoff via JSON
+- CSV import
+- manual provider entry
+- future controlled integrations that supply provider records
 
-### Network Map
+Intake is bounded at 5,000 rows per batch.
 
-Purpose: provider discovery/intelligence for facilities that are not in the current Occu-Med network.
+Before creating campaign targets:
+- duplicates inside the imported batch are suppressed
+- prior Network Outreach records are reused
+- International Search checks the current Occu-Med network
+- uncertain exclusion checks are held for review
 
-Current read contract:
+## Existing-network exclusion
 
-```
-GET {NETWORK_MAP_API_URL}/api/provider-explorer
-```
+International Search is the current-network exclusion source.
 
-Network Outreach consumes stored/candidate provider records as discovery leads. Saved/current-network records are excluded from discovery calls. Every discovered provider still passes through the Provider Gate before outreach.
-
-### International Search
-
-Purpose: authoritative existing-provider/network exclusion.
-
-Current read contract:
+Network Outreach queries:
 
 ```
 GET {INTERNATIONAL_SEARCH_API_URL}/api/network/search
 ```
 
-Network Outreach queries International Search using the candidate's name and geography. A confident facility-level match means the provider is already in the Occu-Med network and should not enter new-provider outreach.
+A confident facility-level match becomes `EXISTING_NETWORK` and does not create a new outreach target.
 
-International Search is not used as Network Outreach's provider-discovery engine.
+If that exclusion source is unavailable, the intake row becomes `NEEDS_REVIEW`; it does not silently become NEW.
 
-### Pricing Agreement Generator
+## Campaign preparation
 
-Purpose: create the provider-specific document from the existing template system.
+Campaign targets hold:
+- priority
+- owner
+- pricing-request flag
+- PSA-needed flag
+- current status
+- follow-up date
+- result/decision
+- notes
 
-The outreach app provides:
-- provider name
-- address
-- provider type/template key
-- country/currency
+Preparation creates an individualized message and, when required, requests the correct provider agreement.
+
+Batch preparation runs with bounded concurrency.
+
+## Agreement integration
+
+Network Outreach calls the existing Pricing Agreement Generator API.
+
+The generator remains authoritative for document layout and field substitution.
+
+Generated documents are persisted against the campaign target and exposed through a durable download route.
+
+## Outlook integration
+
+READY messages export as one row per provider with:
 - campaign target ID
-
-The generator returns:
-- external generation ID
-- file name
-- download/storage URL
-- sha256 when available
-- status
-
-The outreach app never reconstructs agreement page layout.
-
-### Excel / Outlook bridge
-
-Purpose: operate inside the corporate desktop environment.
-
-READY targets should eventually export:
-- outreach target ID
-- facility
+- provider
 - contact
 - To
 - CC
 - subject
-- body
-- exact agreement path/reference
-- status fields
+- complete email body
+- exact agreement file/reference
+- status
 
-The local macro creates individual Outlook drafts/sends and later returns status/events for reconciliation.
+The desktop Excel/VBA bridge creates individual Outlook messages.
 
-## Provider Gate
+## UI model
 
-The gate must operate in this order:
+The web application is organized around execution:
+- Dashboard
+- Campaigns
+- Providers
+- Outreach Queue
+- Agreements
+- Follow-Ups
 
-1. This app's operational records and prior outreach.
-2. Explicit suppression/exclusion rules.
-3. International Search existing-provider/network exclusion.
-4. Fuzzy/ambiguous identity review if the exclusion check is incomplete or ambiguous.
-
-Network Map is upstream discovery, not an exclusion step.
-
-The gate returns a decision, confidence, reasons, and matched source.
-
-## AI responsibilities
-
-AI is a research and reasoning layer, not the source of truth.
-
-Appropriate tasks:
-- extract provider/contact/service/pricing facts
-- normalize entities and addresses
-- classify provider type
-- resolve brand/operator/contracting relationships
-- compare conflicting sources
-- rank candidate contacts
-- draft provider-type-specific outreach
-- suggest match decisions
-
-Every material research fact should remain traceable to evidence.
+No research tab exists.
