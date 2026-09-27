@@ -139,9 +139,9 @@ function App() {
   const [selectedRunId, setSelectedRunId] = useState('');
   const selectedRunRef = useRef('');
   const [candidates, setCandidates] = useState<ResearchCandidate[]>([]);
-  const [prompt, setPrompt] = useState('Find dental providers in South Africa capable of comprehensive dental evaluations, bitewings, and panoramic radiographs. Exclude providers we already know or have already researched. Find usable contact information and prepare qualified targets for outreach.');
-  const [providerType, setProviderType] = useState('dental');
-  const [country, setCountry] = useState('South Africa');
+  const [prompt, setPrompt] = useState('');
+  const [providerType, setProviderType] = useState('');
+  const [country, setCountry] = useState('');
   const [city, setCity] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
@@ -166,7 +166,9 @@ function App() {
     ]);
 
     setHealth(healthResponse);
-    setProviderProfiles(providerTypesResponse.providerTypes ?? []);
+    const profiles = providerTypesResponse.providerTypes ?? [];
+    setProviderProfiles(profiles);
+    setProviderType((current) => current || profiles[0]?.id || '');
     setRuns(runsResponse.runs ?? []);
     setCampaigns(campaignsResponse.campaigns ?? []);
     setQueue(queueResponse.targets ?? []);
@@ -452,6 +454,7 @@ function App() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               aria-label="Provider research request"
+              placeholder="Describe the providers you need, where you need them, required services, pricing requirements, contact requirements, and any exclusions."
             />
 
             <div className="form-grid">
@@ -465,7 +468,7 @@ function App() {
               </label>
               <label>
                 <span>Country</span>
-                <input value={country} onChange={(e) => setCountry(e.target.value)} />
+                <input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="Country or region" />
               </label>
               <label>
                 <span>City / market <small>optional</small></span>
