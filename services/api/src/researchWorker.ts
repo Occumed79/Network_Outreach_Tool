@@ -531,11 +531,7 @@ export async function executeResearchRun(
     }
   }
 
-  if (
-    !structuredDiscoverySucceeded
-    && totalSearchRequests > 0
-    && successfulSearchRequests === 0
-  ) {
+  if (!structuredDiscoverySucceeded && successfulSearchRequests === 0) {
     const message = `All ${totalSearchRequests} configured search requests failed.`;
     await researchDb.query(
       `
@@ -584,8 +580,8 @@ export async function executeResearchRun(
   }
 
   if (!ai.configured) {
-    const hasStructuredCandidates = structuredResults.length > 0;
-    const status = hasStructuredCandidates ? 'COMPLETE' : 'WAITING_FOR_AI';
+    const canCompleteWithoutAi = structuredDiscoverySucceeded;
+    const status = canCompleteWithoutAi ? 'COMPLETE' : 'WAITING_FOR_AI';
     const summary = {
       structuredCandidates: structuredResults.length,
       structuredAdded,
@@ -608,7 +604,7 @@ export async function executeResearchRun(
         runId,
         status,
         JSON.stringify(summary),
-        hasStructuredCandidates
+        canCompleteWithoutAi
           ? null
           : 'Search evidence collected, but no research AI endpoint is configured.'
       ]
