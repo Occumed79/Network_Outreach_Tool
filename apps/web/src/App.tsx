@@ -20,6 +20,11 @@ import {
   UsersRound
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { BorderBeam } from 'border-beam';
+import Grainient from './components/reactbits/Grainient';
+import Orb from './components/reactbits/Orb';
+import GlowCursor from './components/reactbits/GlowCursor';
+import WorldMap from './components/aceternity/WorldMap';
 
 type Health = {
   ok: boolean;
@@ -489,9 +494,46 @@ function App() {
   }
 
   const databaseReady = Boolean(health?.database?.ok);
+  const campaignCountries = [...new Set(
+    campaigns.map((campaign) => campaign.country).filter((country): country is string => Boolean(country))
+  )];
 
   return (
-    <div className="app-shell">
+    <GlowCursor
+      className="network-outreach-glow"
+      color="#39c6ff"
+      secondaryColor="#a56dff"
+      trailLength={28}
+      trailWidth={5}
+      glowIntensity={1.35}
+      opacity={0.72}
+      idleTimeout={420}
+    >
+      <div className="vfx-backdrop" aria-hidden="true">
+        <Grainient
+          timeSpeed={0.11}
+          colorBalance={-0.08}
+          warpStrength={1.25}
+          warpFrequency={4.2}
+          warpSpeed={0.65}
+          warpAmplitude={74}
+          blendAngle={-18}
+          blendSoftness={0.11}
+          rotationAmount={260}
+          noiseScale={1.35}
+          grainAmount={0.035}
+          grainScale={2.1}
+          contrast={1.08}
+          gamma={1.04}
+          saturation={1.12}
+          zoom={0.84}
+          color1="#eff7ff"
+          color2="#b9d8ff"
+          color3="#efe4ff"
+          lightMode
+        />
+      </div>
+      <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">OM</div>
@@ -553,18 +595,37 @@ function App() {
         {activeNav === 'Dashboard' && (
           <>
             <section className="hero-panel">
-              <div>
+              <div className="hero-copy">
                 <p className="eyebrow">Outreach operations</p>
                 <h2>Move hundreds of providers from list to completed outreach.</h2>
                 <p>
                   Import identified providers, automatically exclude the existing network,
                   prepare individualized agreements and messages, then push the ready queue to Outlook.
                 </p>
+                <div className="hero-action">
+                  <BorderBeam
+                    size="sm"
+                    colorVariant="ocean"
+                    theme="light"
+                    strength={0.82}
+                    borderRadius={14}
+                  >
+                    <button className="primary-button large" onClick={() => setActiveNav('Campaigns')}>
+                      <Layers3 size={17} />
+                      Start an outreach campaign
+                    </button>
+                  </BorderBeam>
+                </div>
               </div>
-              <button className="primary-button large" onClick={() => setActiveNav('Campaigns')}>
-                <Layers3 size={17} />
-                Start an outreach campaign
-              </button>
+              <div className="hero-orb-shell" aria-hidden="true">
+                <div className="hero-orb-halo" />
+                <Orb
+                  hue={18}
+                  hoverIntensity={0.42}
+                  rotateOnHover
+                  backgroundColor="#f7fbff"
+                />
+              </div>
             </section>
 
             <section className="metrics metrics-eight">
@@ -586,6 +647,28 @@ function App() {
                   </div>
                 </article>
               ))}
+            </section>
+
+            <section className="global-visual-panel">
+              <div className="global-visual-copy">
+                <p className="eyebrow">Global outreach</p>
+                <h3>Campaign footprint</h3>
+                <p>
+                  {campaignCountries.length > 0
+                    ? `${campaignCountries.length} countr${campaignCountries.length === 1 ? 'y' : 'ies'} represented across active campaign records.`
+                    : 'Campaign geography will appear here as provider lists are loaded.'}
+                </p>
+                {campaignCountries.length > 0 && (
+                  <div className="country-chips">
+                    {campaignCountries.slice(0, 8).map((country) => (
+                      <span key={country}>{country}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="global-visual-map">
+                <WorldMap />
+              </div>
             </section>
 
             <section className="panel">
@@ -1046,7 +1129,8 @@ function App() {
           </>
         )}
       </main>
-    </div>
+      </div>
+    </GlowCursor>
   );
 }
 
