@@ -1583,3 +1583,27 @@ textarea:focus {
     padding-right: 13px;
   }
 }
+
+
+.hero-particles {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: .48;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.32) 38%, #000 67%, rgba(0,0,0,.72) 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.32) 38%, #000 67%, rgba(0,0,0,.72) 100%);
+}
+
+.hero-particles .particles-container,
+.hero-particles canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-particles {
+    display: none;
+  }
+}
