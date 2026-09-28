@@ -23,6 +23,7 @@ import type { LucideIcon } from 'lucide-react';
 import { BorderBeam } from 'border-beam';
 import Grainient from './components/reactbits/Grainient';
 import Orb from './components/reactbits/Orb';
+import Particles from './components/reactbits/Particles';
 import GlowCursor from './components/reactbits/GlowCursor';
 import WorldMap from './components/aceternity/WorldMap';
 
@@ -595,6 +596,21 @@ function App() {
         {activeNav === 'Dashboard' && (
           <>
             <section className="hero-panel">
+              <div className="hero-particles" aria-hidden="true">
+                <Particles
+                  particleCount={92}
+                  particleSpread={8}
+                  speed={0.055}
+                  particleColors={['#ffffff', '#75cfff', '#b99cff']}
+                  moveParticlesOnHover
+                  particleHoverFactor={0.7}
+                  alphaParticles
+                  particleBaseSize={72}
+                  sizeRandomness={0.72}
+                  cameraDistance={20}
+                  pixelRatio={1}
+                />
+              </div>
               <div className="hero-copy">
                 <p className="eyebrow">Outreach operations</p>
                 <h2>Move hundreds of providers from list to completed outreach.</h2>
