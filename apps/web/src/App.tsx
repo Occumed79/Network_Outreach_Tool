@@ -24,7 +24,6 @@ import { BorderBeam } from 'border-beam';
 import Grainient from './components/reactbits/Grainient';
 import Orb from './components/reactbits/Orb';
 import Particles from './components/reactbits/Particles';
-import GlowCursor from './components/reactbits/GlowCursor';
 import WorldMap from './components/aceternity/WorldMap';
 
 type Health = {
@@ -278,6 +277,10 @@ function App() {
     void loadCampaign(selectedCampaignId);
   }, [selectedCampaignId]);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [activeNav]);
+
   async function refreshCampaign() {
     await Promise.all([refreshTopLevel(), loadCampaign(selectedCampaignId)]);
   }
@@ -478,21 +481,108 @@ function App() {
   const waitingAgreementCount = targets.filter(
     (target) => target.psa_needed && target.agreement_status !== 'GENERATED'
   ).length;
+  const generatedAgreementCount = targets.filter(
+    (target) => target.psa_needed && target.agreement_status === 'GENERATED'
+  ).length;
+  const followUpCount = targets.filter((target) => target.status === 'NEED_FOLLOW_UP').length;
+  const replyCount = targets.filter((target) => Boolean(target.replied_at)).length;
+  const bouncedCount = targets.filter((target) => target.status === 'BOUNCED' || Boolean(target.bounced_at)).length;
+  const contactableCount = targets.filter((target) => Boolean(target.primary_email)).length;
+
+  const visibleTargets = filteredTargets.filter((target) => {
+    if (activeNav === 'Agreements') return target.psa_needed;
+    if (activeNav === 'Follow-Ups') return target.status === 'NEED_FOLLOW_UP';
+    if (activeNav === 'Outreach Queue') {
+      return ['NOT_STARTED', 'READY', 'WAITING_ON_PSA', 'ON_HOLD'].includes(target.status);
+    }
+    return true;
+  });
 
   const allFilteredSelected =
-    filteredTargets.length > 0
-    && filteredTargets.every((target) => selectedTargetIds.includes(target.id));
+    visibleTargets.length > 0
+    && visibleTargets.every((target) => selectedTargetIds.includes(target.id));
 
   function toggleAllFiltered() {
     if (allFilteredSelected) {
-      const visible = new Set(filteredTargets.map((target) => target.id));
+      const visible = new Set(visibleTargets.map((target) => target.id));
       setSelectedTargetIds((current) => current.filter((id) => !visible.has(id)));
     } else {
       setSelectedTargetIds((current) => [
-        ...new Set([...current, ...filteredTargets.map((target) => target.id)])
+        ...new Set([...current, ...visibleTargets.map((target) => target.id)])
       ]);
     }
   }
+
+  const workspaceMeta =
+    activeNav === 'Providers'
+      ? {
+          kicker: 'Provider roster',
+          title: 'Provider readiness',
+          description: 'See every provider already handed into outreach, whether they are contactable, and what blocks the next action.',
+          icon: UsersRound,
+          tone: 'cyan',
+          emptyTitle: 'No providers loaded',
+          emptyBody: 'Open a campaign and import the provider list you already identified.'
+        }
+      : activeNav === 'Outreach Queue'
+        ? {
+            kicker: 'Execution queue',
+            title: 'Prepare the next send',
+            description: 'Resolve missing email or agreement blockers, prepare eligible providers, then export the ready queue to Outlook.',
+            icon: Send,
+            tone: 'blue',
+            emptyTitle: 'Nothing is staged for outreach',
+            emptyBody: 'Load providers into a campaign first. Eligible providers will appear here for preparation and export.'
+          }
+        : activeNav === 'Agreements'
+          ? {
+              kicker: 'PSA pipeline',
+              title: 'Agreement readiness',
+              description: 'Track every provider that requires a pricing/service agreement and whether a downloadable artifact is actually ready.',
+              icon: FileText,
+              tone: 'violet',
+              emptyTitle: 'No agreements in this view',
+              emptyBody: 'Providers that require an agreement will appear here once they are added to a campaign.'
+            }
+          : {
+              kicker: 'Response desk',
+              title: 'Follow-up worklist',
+              description: 'Focus only on providers that need another touch, with reply and bounce signals visible before the next outreach action.',
+              icon: Clock3,
+              tone: 'rose',
+              emptyTitle: 'No follow-ups are due',
+              emptyBody: 'When a contacted provider reaches follow-up status, it will appear here instead of getting lost in the full roster.'
+            };
+
+  const WorkspaceIcon = workspaceMeta.icon;
+  const workspaceMetrics =
+    activeNav === 'Providers'
+      ? [
+          ['Providers', targets.length, UsersRound],
+          ['Contactable', contactableCount, Mail],
+          ['Ready', readyCount, CheckCircle2],
+          ['Waiting agreement', waitingAgreementCount, FileText]
+        ]
+      : activeNav === 'Outreach Queue'
+        ? [
+            ['In queue', visibleTargets.length, Send],
+            ['Ready for Outlook', readyCount, CheckCircle2],
+            ['Missing email', missingEmailCount, Mail],
+            ['Waiting agreement', waitingAgreementCount, FileText]
+          ]
+        : activeNav === 'Agreements'
+          ? [
+              ['Agreement required', targets.filter((target) => target.psa_needed).length, FileText],
+              ['Generated', generatedAgreementCount, CheckCircle2],
+              ['Waiting', waitingAgreementCount, Clock3],
+              ['Ready for Outlook', readyCount, Send]
+            ]
+          : [
+              ['Follow-up due', followUpCount, Clock3],
+              ['Contactable', contactableCount, Mail],
+              ['Replies', replyCount, Inbox],
+              ['Bounced', bouncedCount, CircleAlert]
+            ];
 
   const databaseReady = Boolean(health?.database?.ok);
   const campaignCountries = [...new Set(
@@ -500,16 +590,7 @@ function App() {
   )];
 
   return (
-    <GlowCursor
-      className="network-outreach-glow"
-      color="#39c6ff"
-      secondaryColor="#a56dff"
-      trailLength={28}
-      trailWidth={5}
-      glowIntensity={1.35}
-      opacity={0.72}
-      idleTimeout={420}
-    >
+    <div className="app-frame">
       <div className="vfx-backdrop" aria-hidden="true">
         <Grainient
           timeSpeed={0.11}
@@ -639,7 +720,7 @@ function App() {
                   hue={18}
                   hoverIntensity={0.42}
                   rotateOnHover
-                  backgroundColor="#f7fbff"
+                  backgroundColor="#000000"
                 />
               </div>
             </section>
@@ -665,27 +746,53 @@ function App() {
               ))}
             </section>
 
-            <section className="global-visual-panel">
-              <div className="global-visual-copy">
-                <p className="eyebrow">Global outreach</p>
-                <h3>Campaign footprint</h3>
-                <p>
-                  {campaignCountries.length > 0
-                    ? `${campaignCountries.length} countr${campaignCountries.length === 1 ? 'y' : 'ies'} represented across campaign records.`
-                    : 'Campaign geography will appear here as provider lists are loaded.'}
-                </p>
-                {campaignCountries.length > 0 && (
+            {campaigns.length > 0 ? (
+              <section className="global-visual-panel">
+                <div className="global-visual-copy">
+                  <p className="eyebrow">Global outreach</p>
+                  <h3>Campaign footprint</h3>
+                  <p>
+                    {`${campaignCountries.length} countr${campaignCountries.length === 1 ? 'y' : 'ies'} represented across campaign records.`}
+                  </p>
                   <div className="country-chips">
                     {campaignCountries.slice(0, 8).map((country) => (
                       <span key={country}>{country}</span>
                     ))}
                   </div>
-                )}
-              </div>
-              <div className="global-visual-map">
-                <WorldMap />
-              </div>
-            </section>
+                </div>
+                <div className="global-visual-map">
+                  <WorldMap />
+                </div>
+              </section>
+            ) : (
+              <section className="launch-sequence-panel">
+                <div className="launch-sequence-copy">
+                  <p className="eyebrow">Start here</p>
+                  <h3>Turn an identified provider list into outreach.</h3>
+                  <p>The app begins after discovery. Create the campaign, load the provider list, then prepare the records that are actually ready to send.</p>
+                </div>
+                <div className="launch-steps">
+                  <button onClick={() => setActiveNav('Campaigns')}>
+                    <span>01</span>
+                    <Layers3 size={18} />
+                    <strong>Create campaign</strong>
+                    <small>Define the outreach batch.</small>
+                  </button>
+                  <button onClick={() => setActiveNav('Campaigns')}>
+                    <span>02</span>
+                    <Upload size={18} />
+                    <strong>Load providers</strong>
+                    <small>CSV, Network Map handoff, or manual.</small>
+                  </button>
+                  <button onClick={() => setActiveNav('Outreach Queue')}>
+                    <span>03</span>
+                    <Send size={18} />
+                    <strong>Prepare + export</strong>
+                    <small>Resolve blockers and send through Outlook.</small>
+                  </button>
+                </div>
+              </section>
+            )}
 
             <section className="panel">
               <div className="panel-header">
@@ -952,10 +1059,20 @@ function App() {
                   </section>
                 </>
               ) : (
-                <section className="panel empty-state tall">
-                  <Layers3 size={28} />
-                  <strong>Create or select an outreach campaign</strong>
-                  <p>The campaign becomes the workspace for provider intake, exclusions, agreements and sending.</p>
+                <section className="panel campaign-empty-state">
+                  <div className="campaign-empty-orb" aria-hidden="true">
+                    <Orb hue={22} hoverIntensity={0.2} backgroundColor="#000000" />
+                  </div>
+                  <div className="campaign-empty-copy">
+                    <p className="eyebrow">Campaign workspace</p>
+                    <h2>Create the first outreach batch.</h2>
+                    <p>The campaign holds provider intake, exclusion results, agreement preparation, queue readiness, and follow-up status in one place.</p>
+                    <div className="campaign-empty-steps">
+                      <span><b>1</b> Name the campaign</span>
+                      <span><b>2</b> Import the provider list</span>
+                      <span><b>3</b> Prepare eligible outreach</span>
+                    </div>
+                  </div>
                 </section>
               )}
             </div>
@@ -964,6 +1081,20 @@ function App() {
 
         {['Providers', 'Outreach Queue', 'Agreements', 'Follow-Ups'].includes(activeNav) && (
           <>
+            <section className={`workspace-context workspace-context-${workspaceMeta.tone}`}>
+              <div className="workspace-context-icon"><WorkspaceIcon size={22} /></div>
+              <div className="workspace-context-copy">
+                <p className="eyebrow">{workspaceMeta.kicker}</p>
+                <h2>{workspaceMeta.title}</h2>
+                <p>{workspaceMeta.description}</p>
+              </div>
+              <div className="workspace-context-campaign">
+                <span>Working campaign</span>
+                <strong>{selectedCampaign?.name || 'None selected'}</strong>
+                <small>{selectedCampaign ? `${number(selectedCampaign.target_count)} providers in batch` : 'Choose or create a campaign to begin'}</small>
+              </div>
+            </section>
+
             <section className="workspace-toolbar">
               <div>
                 <label>
@@ -1020,13 +1151,8 @@ function App() {
               </div>
             </section>
 
-            <section className="metrics compact-metrics">
-              {([
-                ['Providers', targets.length, UsersRound],
-                ['Ready', readyCount, CheckCircle2],
-                ['Missing email', missingEmailCount, Mail],
-                ['Waiting agreement', waitingAgreementCount, FileText]
-              ] as Array<[string, number, LucideIcon]>).map(([label, value, Icon]) => (
+            <section className="metrics compact-metrics workspace-metrics">
+              {(workspaceMetrics as Array<[string, number, LucideIcon]>).map(([label, value, Icon]) => (
                 <article key={String(label)}>
                   <span className="metric-icon"><Icon size={18} /></span>
                   <div>
@@ -1067,16 +1193,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredTargets
-                      .filter((target) => {
-                        if (activeNav === 'Agreements') return target.psa_needed;
-                        if (activeNav === 'Follow-Ups') return target.status === 'NEED_FOLLOW_UP';
-                        if (activeNav === 'Outreach Queue') {
-                          return ['NOT_STARTED', 'READY', 'WAITING_ON_PSA', 'ON_HOLD'].includes(target.status);
-                        }
-                        return true;
-                      })
-                      .map((target) => (
+                    {visibleTargets.map((target) => (
                         <tr key={target.id}>
                           <td className="check-cell">
                             <input
@@ -1133,11 +1250,15 @@ function App() {
                   </tbody>
                 </table>
 
-                {filteredTargets.length === 0 && (
-                  <div className="empty-state">
-                    <Building2 size={26} />
-                    <strong>No providers match this view</strong>
-                    <p>Choose another campaign/status or import providers into the campaign.</p>
+                {visibleTargets.length === 0 && (
+                  <div className="empty-state workspace-empty-state">
+                    <div className="empty-state-icon"><Building2 size={24} /></div>
+                    <strong>{workspaceMeta.emptyTitle}</strong>
+                    <p>{workspaceMeta.emptyBody}</p>
+                    <button className="ghost-button" onClick={() => setActiveNav('Campaigns')}>
+                      <Layers3 size={15} />
+                      Open campaign workspace
+                    </button>
                   </div>
                 )}
               </div>
@@ -1146,7 +1267,7 @@ function App() {
         )}
       </main>
       </div>
-    </GlowCursor>
+    </div>
   );
 }
 
