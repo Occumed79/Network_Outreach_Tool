@@ -7,15 +7,14 @@ import DottedMap from "dotted-map";
 import "./WorldMap.css";
 
 /**
- * Adapted from Aceternity UI World Map for the existing Vite app.
+ * Adapted from Aceternity UI World Map for this existing Vite app.
  * Source: https://ui.aceternity.com/components/world-map
  * Registry: https://ui.aceternity.com/registry/world-map.json
  */
+type MapPoint = { lat: number; lng: number; label?: string };
+
 interface MapProps {
-  dots?: Array<{
-    start: { lat: number; lng: number; label?: string };
-    end: { lat: number; lng: number; label?: string };
-  }>;
+  dots?: Array<{ start: MapPoint; end: MapPoint }>;
   lineColor?: string;
 }
 
@@ -90,14 +89,11 @@ export default function WorldMap({
         </defs>
 
         {dots.flatMap((dot, i) =>
-          [
+          ([
             ["start", dot.start],
             ["end", dot.end],
-          ].map(([kind, point]) => {
-            const projected = projectPoint(
-              (point as MapProps["dots"] extends Array<infer D> ? D extends { start: infer S } ? S extends { lat: infer L } ? L : never : never : never) as number,
-              (point as { lng: number }).lng,
-            );
+          ] as const).map(([kind, point]) => {
+            const projected = projectPoint(point.lat, point.lng);
             return (
               <g key={`${kind}-${i}`}>
                 <circle cx={projected.x} cy={projected.y} r="2" fill={lineColor} />
