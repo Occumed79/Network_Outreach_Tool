@@ -8,6 +8,9 @@ This frontend intentionally composes verified third-party components from the vi
 - ReactBits Grainient: https://www.reactbits.dev/backgrounds/grainient
   - upstream: https://github.com/DavidHDev/react-bits
   - vendored under `components/reactbits/Grainient.*`
+- ReactBits Particles: https://www.reactbits.dev/backgrounds/particles
+  - upstream: https://github.com/DavidHDev/react-bits
+  - vendored under `components/reactbits/Particles.*`
 - ReactBits Glow Cursor: https://www.reactbits.dev/animations/glow-cursor
   - upstream: https://github.com/DavidHDev/react-bits
   - vendored under `components/reactbits/GlowCursor.*`
