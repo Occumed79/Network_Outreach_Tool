@@ -1607,3 +1607,25 @@ textarea:focus {
     display: none;
   }
 }
+
+
+/* Respect reduced-motion without editing vendored third-party effect internals. */
+@media (prefers-reduced-motion: reduce) {
+  .vfx-backdrop .grainient-container,
+  .hero-orb-shell .orb-container,
+  .aceternity-world-map__routes {
+    display: none !important;
+  }
+
+  .vfx-backdrop {
+    background:
+      radial-gradient(circle at 76% 18%, rgba(111, 190, 255, .22), transparent 28%),
+      radial-gradient(circle at 88% 74%, rgba(151, 121, 236, .15), transparent 34%),
+      linear-gradient(135deg, #eef6ff, #f6f1ff 58%, #eef8ff);
+  }
+
+  .hero-orb-halo {
+    filter: blur(14px);
+    opacity: .82;
+  }
+}
