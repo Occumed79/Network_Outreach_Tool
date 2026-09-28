@@ -11,9 +11,6 @@ This frontend intentionally composes verified third-party components from the vi
 - ReactBits Particles: https://www.reactbits.dev/backgrounds/particles
   - upstream: https://github.com/DavidHDev/react-bits
   - vendored under `components/reactbits/Particles.*`
-- ReactBits Glow Cursor: https://www.reactbits.dev/animations/glow-cursor
-  - upstream: https://github.com/DavidHDev/react-bits
-  - vendored under `components/reactbits/GlowCursor.*`
 - Aceternity World Map: https://ui.aceternity.com/components/world-map
   - source registry: https://ui.aceternity.com/registry/world-map.json
   - Vite adaptation under `components/aceternity/WorldMap.*`
@@ -22,3 +19,5 @@ This frontend intentionally composes verified third-party components from the vi
   - uses the MIT `border-beam` package by Jakub Antalik, imported directly rather than reimplemented.
 
 Do not replace these effects with hand-invented approximations. Adapt only where required by the existing Vite/React application and preserve the Network Outreach business workflow.
+
+The ReactBits Glow Cursor source remains vendored for reference but is intentionally not mounted in the application shell after screenshot QA showed the full-page trail reading as a visual artifact.
