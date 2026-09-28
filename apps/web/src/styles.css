@@ -1629,3 +1629,33 @@ textarea:focus {
     opacity: .82;
   }
 }
+
+
+/* Accessibility finish gate: strengthen small-copy contrast and keyboard focus. */
+.eyebrow,
+.metrics p,
+.workspace-toolbar label span,
+.campaign-kpis span,
+.brand span,
+.connection-row,
+.empty-state {
+  color: #5b7089;
+}
+
+.global-visual-copy > p:not(.eyebrow) {
+  color: #61758b;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.nav-item:focus-visible,
+.campaign-list-item:focus-visible {
+  outline: 2px solid rgba(31, 131, 205, .82);
+  outline-offset: 3px;
+  box-shadow:
+    0 0 0 5px rgba(92, 191, 241, .16),
+    0 0 28px rgba(116, 120, 235, .14);
+}
