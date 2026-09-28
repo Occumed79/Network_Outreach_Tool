@@ -564,11 +564,11 @@ function App() {
           </div>
           <div className="connection-row">
             <span className={health?.integrations?.existingNetworkExclusion ? 'connection-dot live' : 'connection-dot'} />
-            Existing-network exclusion
+            Exclusion source configured
           </div>
           <div className="connection-row">
             <span className={health?.integrations?.agreementGenerator ? 'connection-dot live' : 'connection-dot'} />
-            Agreement generator
+            Agreement generator configured
           </div>
         </div>
       </aside>
@@ -671,7 +671,7 @@ function App() {
                 <h3>Campaign footprint</h3>
                 <p>
                   {campaignCountries.length > 0
-                    ? `${campaignCountries.length} countr${campaignCountries.length === 1 ? 'y' : 'ies'} represented across active campaign records.`
+                    ? `${campaignCountries.length} countr${campaignCountries.length === 1 ? 'y' : 'ies'} represented across campaign records.`
                     : 'Campaign geography will appear here as provider lists are loaded.'}
                 </p>
                 {campaignCountries.length > 0 && (
